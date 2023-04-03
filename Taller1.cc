@@ -11,42 +11,15 @@
 #include "ns3/packet-socket-helper.h"
 #include "ns3/packet-socket-address.h"
 #include "ns3/athstats-helper.h"
+#include <random-walk-2d-mobility-model.h>
 
 using namespace ns3;
 
-// Set the position of a node
-static void
-SetPosition (Ptr<Node> node, Vector position)
-{
-  Ptr<MobilityModel> mobility = node->GetObject<MobilityModel> ();
-  mobility->SetPosition (position);
-}
-
-// Get node position
-static Vector
-GetPosition (Ptr<Node> node)
-{
-  Ptr<MobilityModel> mobility = node->GetObject<MobilityModel> ();
-  return mobility->GetPosition ();
-}
-
-// Change position of node
-static void
-AdvancePosition (Ptr<Node> node)
-{
-  Vector pos = GetPosition (node);
-  pos.x += 5.0;
-  if (pos.x >= 210.0)
-    {
-      return;
-    }
-  SetPosition (node, pos);
-
-  Simulator::Schedule (Seconds (1.0), &AdvancePosition, node);
-}
-
 int main (int argc, char *argv[])
 {
+  /*
+  * Get console parameters
+  */
   CommandLine cmd (__FILE__);
   
   uint8_t nLevels = 2;
@@ -67,24 +40,92 @@ int main (int argc, char *argv[])
   cmd.AddValue("nClusters_3rd_level", "Number of clusters in 1st level", nClusters_3rd_level);
   cmd.AddValue("nNodes_pC_3rd_level", "Number of nodes per cluster in 1st level", nNodes_pC_3rd_level);
 
+  // Space bounds
+  double width = 500, height = 500;
+  cmd.AddValue("width", "Width of the space", width);
+  cmd.AddValue("height", "Height of the space", height);
+
   cmd.Parse (argc, argv);
 
+  /*
+  * Configure simulation
+  */
+
+  // Define channel
+  YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
+
+  // Using friss propagation loss model
+  // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
+  wifiChannel.AddPropagationLoss ("ns3::FriisPropagationLossModel");
+  
+  // Use constant speed propagation delay model
+  wifiChannel.SetPropagationDelay ("ns3::ConstantSpeedPropagationDelayModel");
+  
+  YansWifiPhyHelper wifiPhy;
+  // Create the channel of transmission
+  wifiPhy.SetChannel (wifiChannel.Create ());
+
+  // Create nodes
+  NodeContainer c;
+
+  // Test first level nodes
+  c.Create (nNodes_pC_1st_level * nClusters_1st_level);
+  
   WifiHelper wifi;
 
-  // Here randomway mobility goes
+  // Set random way mobility
   MobilityHelper mobility;
-  
+
+  // Setting geometrical bounds within a rectangle
+  mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
+                             "Bounds", RectangleValue (Rectangle (
+                                -width / 2, width / 2,
+                                -height / 2, height / 2
+                              )));
+
+  // Assign MAC Address
+  WifiMacHelper wifiMac;
+  wifi.SetStandard (WIFI_STANDARD_80211b);
+  wifi.SetRemoteStationManager ("ns3::ConstantRateWifiManager",
+                                "DataMode",StringValue("DsssRate1Mbps"),
+                                "ControlMode", StringValue("DsssRate1Mbps");
+
+  // Set it to adhoc mode
+  wifiMac.SetType ("ns3::AdhocWifiMac");
+
+  // Create actual device's container
+  NetDeviceContainer devices = wifi.Install (wifiPhy, wifiMac, c);
+
+  // Enable OLSR
+  OlsrHelper olsr;
+  Ipv4StaticRoutingHelper staticRouting;
+
+  Ipv4ListRoutingHelper list;
+  list.Add (staticRouting, 0);
+  list.Add (olsr, 10);
+
+  InternetStackHelper internet;
+  internet.SetRoutingHelper (list); // has effect on the next Install ()
+  internet.Install (c);
+
+  Ipv4AddressHelper ipv4;
+  NS_LOG_INFO ("Assign IP Addresses.");
+  ipv4.SetBase ("10.1.1.0", "255.255.255.0");
+  Ipv4InterfaceContainer i = ipv4.Assign (devices);
+
   // Levels data
   NodeContainer first_level[nClusters_1st_level]; // Set of clusters on first level
   NodeContainer second_level[nClusters_2nd_level]; // Set of clusters on second level
   NodeContainer third_level[nClusters_3rd_level]; // Set of clusters on third level
 
-  // TODO create nodes for each level
   // Implement random mobility model
   // Implement basic Ad Hoc interaction
   // Assign resources with truncated geomtrical distribution
-  Simulator::Run ();
 
+  // Set simulation time
+  Simulator::Stop (Seconds (33.0));
+  
+  Simulator::Run ();
   Simulator::Destroy ();
 
   return 0;
