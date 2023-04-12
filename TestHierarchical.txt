@@ -1,0 +1,72 @@
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/aodv-module.h"
+#include "ns3/point-to-point-helper.h"
+#include "ns3/yans-wifi-helper.h"
+
+using namespace ns3;
+
+NS_LOG_COMPONENT_DEFINE("HierarchicalAdHoc");
+
+int main(int argc, char *argv[])
+{
+    // Set up logging
+    LogComponentEnable("HierarchicalAdHoc", LOG_LEVEL_INFO);
+
+    // Create nodes
+    NodeContainer nodes;
+    nodes.Create(10);
+
+    // Create a point-to-point link between the first two nodes
+    PointToPointHelper p2p;
+    p2p.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
+    p2p.SetDeviceAttribute("Mtu", UintegerValue(1500));
+    NetDeviceContainer p2pDevices = p2p.Install(nodes.Get(0), nodes.Get(1));
+
+    // Create a wireless ad hoc network between the other nodes
+    WifiHelper wifi;
+    wifi.SetStandard(WIFI_PHY_STANDARD_80211a);
+    wifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
+                                 "DataMode", StringValue("OfdmRate6MbpsBW10MHz"),
+                                 "ControlMode", StringValue("OfdmRate6MbpsBW10MHz"));
+    WifiMacHelper mac;
+    mac.SetType("ns3::AdhocWifiMac");
+    NetDeviceContainer wifiDevices = wifi.Install(mac, nodes.Get(2, 9));
+
+    // Install internet stack on all nodes
+    InternetStackHelper internet;
+    internet.Install(nodes);
+
+    // Assign IP addresses to nodes
+    Ipv4AddressHelper address;
+    address.SetBase("10.1.1.0", "255.255.255.0");
+    Ipv4InterfaceContainer p2pIfaces = address.Assign(p2pDevices);
+    address.SetBase("10.1.2.0", "255.255.255.0");
+    Ipv4InterfaceContainer wifiIfaces = address.Assign(wifiDevices);
+
+    // Set up AODV routing on all nodes
+    AodvHelper aodv;
+    Ipv4ListRoutingHelper list;
+    list.Add(aodv, 0);
+    InternetStackHelper::SetRoutingHelper(nodes, list);
+    InternetStackHelper::Initialize();
+
+    // Set up hierarchical routing
+    Ptr<Ipv4> ipv4 = nodes.Get(0)->GetObject<Ipv4>();
+    Ipv4RoutingTableEntry defaultRoute;
+    defaultRoute.SetGateway(p2pIfaces.GetAddress(1));
+    defaultRoute.SetInterface(p2pIfaces.GetInterface(0));
+    defaultRoute.SetMetric(1);
+    ipv4->GetRoutingTable()->AddDefaultRoute(defaultRoute);
+    for (uint32_t i = 2; i < 10; ++i)
+    {
+        ipv4 = nodes.Get(i)->GetObject<Ipv4>();
+        Ipv4RoutingTableEntry route;
+        route.SetGateway(wifiIfaces.GetAddress(2));
+        route.SetInterface(wifiIfaces.GetInterface(1));
+        route.SetMetric(1);
+        ipv4->GetRoutingTable()->AddDefaultRoute(route);
+    }
+}
