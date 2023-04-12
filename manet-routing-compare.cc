@@ -142,6 +142,7 @@ void RoutingExperiment::ReceivePacket(Ptr<Socket> socket)
 {
   Ptr<Packet> packet;
   Address senderAddress;
+  std::cout << "ReceivePacket" << std::endl;
   while ((packet = socket->RecvFrom(senderAddress)))
   {
     bytesTotal += packet->GetSize();
@@ -173,6 +174,7 @@ void RoutingExperiment::CheckThroughput()
 Ptr<Socket>
 RoutingExperiment::SetupPacketReceive(Ipv4Address addr, Ptr<Node> node)
 {
+  std::cout << addr << std::endl;
   TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
   Ptr<Socket> sink = Socket::CreateSocket(node, tid);
   InetSocketAddress local = InetSocketAddress(addr, port);
@@ -221,7 +223,9 @@ void RoutingExperiment::Run(int nSinks, double txp, std::string CSVfileName)
   m_txp = txp;
   m_CSVfileName = CSVfileName;
 
-  int nWifis = 50;
+  m_protocol = 1;
+
+  int nWifis = 20;
 
   double TotalTime = 200.0;
   std::string rate("2048bps");
@@ -286,45 +290,15 @@ void RoutingExperiment::Run(int nSinks, double txp, std::string CSVfileName)
   // streamIndex += mobilityAdhoc.AssignStreams(adhocNodes, streamIndex);
   // NS_UNUSED(streamIndex); // From this point, streamIndex is unused
 
-  AodvHelper aodv;
   OlsrHelper olsr;
-  DsdvHelper dsdv;
-  DsrHelper dsr;
-  DsrMainHelper dsrMain;
+
   Ipv4ListRoutingHelper list;
   InternetStackHelper internet;
+  list.Add(olsr, 100);
+  internet.SetRoutingHelper(list);
+  internet.Install(adhocNodes);
 
-  switch (m_protocol)
-  {
-  case 1:
-    list.Add(olsr, 100);
-    m_protocolName = "OLSR";
-    break;
-  case 2:
-    list.Add(aodv, 100);
-    m_protocolName = "AODV";
-    break;
-  case 3:
-    list.Add(dsdv, 100);
-    m_protocolName = "DSDV";
-    break;
-  case 4:
-    m_protocolName = "DSR";
-    break;
-  default:
-    NS_FATAL_ERROR("No such protocol:" << m_protocol);
-  }
-
-  if (m_protocol < 4)
-  {
-    internet.SetRoutingHelper(list);
-    internet.Install(adhocNodes);
-  }
-  else if (m_protocol == 4)
-  {
-    internet.Install(adhocNodes);
-    dsrMain.Install(dsr, adhocNodes);
-  }
+  m_protocolName = "OLSR";
 
   NS_LOG_INFO("assigning ip address");
 
@@ -339,7 +313,6 @@ void RoutingExperiment::Run(int nSinks, double txp, std::string CSVfileName)
 
   for (int i = 0; i < nSinks; i++)
   {
-    /*
     Ptr<Socket> sink = SetupPacketReceive(adhocInterfaces.GetAddress(i), adhocNodes.Get(i));
 
     AddressValue remoteAddress(InetSocketAddress(adhocInterfaces.GetAddress(i), port));
@@ -349,7 +322,6 @@ void RoutingExperiment::Run(int nSinks, double txp, std::string CSVfileName)
     ApplicationContainer temp = onoff1.Install(adhocNodes.Get(i + nSinks));
     temp.Start(Seconds(var->GetValue(100.0, 101.0)));
     temp.Stop(Seconds(TotalTime));
-    */
   }
 
   std::stringstream ss;

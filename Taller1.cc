@@ -55,21 +55,21 @@ public:
   NetDeviceContainer devices;
 
   // Count of nodes of this cluster
-  uint8_t nNodes;
+  int nNodes;
 
   // Save cluster's resources
   double resources;
 
   // Level index of this cluster
-  uint8_t level;
+  int level;
 
   // Cluster index, useful for subnetting masks
-  uint8_t index;
+  int index;
 
   // Head node of cluster
   Ptr<Node> head;
 
-  Cluster(uint8_t, double, uint8_t, double, uint8_t);
+  Cluster(int, double, int, double, int);
 
   // Configure and generate network devices container
   void SetupDevices(
@@ -81,7 +81,7 @@ public:
   Ipv4InterfaceContainer SetupNetworkAddresses(Ipv4AddressHelper &address);
 };
 
-Cluster::Cluster(uint8_t _nNodes, double _resources, uint8_t _level, double _probability, uint8_t _index)
+Cluster::Cluster(int _nNodes, double _resources, int _level, double _probability, int _index)
 {
   // Set cluster's resources
   resources = _resources;
@@ -94,6 +94,7 @@ Cluster::Cluster(uint8_t _nNodes, double _resources, uint8_t _level, double _pro
 
   // Set cluster index
   index = _index;
+  std::cout << index << std::endl;
 
   // Create nodes
   nodes.Create(nNodes);
@@ -114,10 +115,10 @@ void Cluster::SetupDevices(
 Ipv4InterfaceContainer Cluster::SetupNetworkAddresses(Ipv4AddressHelper &address)
 {
   // Set subnet mask
-  std::stringstream subnet;
-  subnet << "10." << level << "." << index << ".0";
-  std::cout << subnet.str() << std::endl;
-  address.SetBase("10.1.1.0", "255.255.255.0");
+  std::stringstream s;
+  s << "10." << level << "." << index << ".0";
+  std::cout << "Assign ip address: " << s.str() << "To cluster " << index << std::endl;
+  address.SetBase(ns3::Ipv4Address(s.str().c_str()), "255.255.255.0");
   return address.Assign(devices);
 }
 
@@ -129,13 +130,13 @@ public:
   std::vector<Cluster> clusters;
 
   // Number of clusters on this level
-  uint8_t nClusters;
+  int nClusters;
 
   // Total resources on this level, will be designated to each cluster
   double resources;
 
   // Save this level index (higher levels mean higher hierarchical level)
-  uint8_t index;
+  int index;
 
   // Keep a global container of all nodes
   NodeContainer allNodes;
@@ -144,7 +145,7 @@ public:
   NetDeviceContainer allDevices;
 
   // Create nodes and assign resources
-  Level(uint8_t, uint8_t, double, double, uint8_t);
+  Level(int, int, double, double, int);
 
   // Configure all subclusters
   void SetupDevices(
@@ -154,11 +155,14 @@ public:
 
   // Configure network addresses for all nodes
   Ipv4InterfaceContainer SetupNetworkAddresses(Ipv4AddressHelper &address);
+
+  // Configure network addresses for all head nodes
+  Ipv4InterfaceContainer SetupHeadsAddresses(Ipv4AddressHelper &address);
 };
 
 Level::Level(
-    uint8_t _nClusters, uint8_t _nNodesPerCluster,
-    double _resources, double _probability, uint8_t _index)
+    int _nClusters, int _nNodesPerCluster,
+    double _resources, double _probability, int _index)
 {
   // Reserve space for clusters
   clusters.reserve(_nClusters);
@@ -211,6 +215,22 @@ Ipv4InterfaceContainer Level::SetupNetworkAddresses(Ipv4AddressHelper &address)
   return interfaces;
 }
 
+Ipv4InterfaceContainer Level::SetupHeadsAddresses(Ipv4AddressHelper &address)
+{
+  // Configure network addresses for each cluster's head node and save all of network addresses
+  Ipv4InterfaceContainer interfaces;
+  address.SetBase("172.17.0.0", "255.255.255.0");
+
+  for (int i = 0; i < nClusters; i++)
+  {
+    std::cout << "Assigns interface to head" << std::endl;
+    Ipv4InterfaceContainer clusterInterfaces = address.Assign(clusters[i].head->GetDevice(0));
+    interfaces.Add(clusterInterfaces);
+  }
+
+  return interfaces;
+}
+
 // Define main class
 class Taller1Experiment
 {
@@ -231,25 +251,28 @@ private:
   // Handle received packets
   void ReceivePacket(Ptr<Socket> socket);
 
+  // Handle sent packets
+  void SendPacket(Ptr<Socket> socket, uint32_t);
+
   // Update throught
   void UpdateThroughput();
 
   // UDP sender port number
-  uint16_t port;
+  int port;
 
   // Specialized configs
 
   // Number of levels
-  uint8_t nLevels;
+  int nLevels;
 
   // Data for first level
-  uint8_t nClusters_1st_level, nNodes_pC_1st_level;
+  int nClusters_1st_level, nNodes_pC_1st_level;
 
   // Data for second level
-  uint8_t nClusters_2nd_level, nNodes_pC_2nd_level;
+  int nClusters_2nd_level, nNodes_pC_2nd_level;
 
   // Data for third level
-  uint8_t nClusters_3rd_level, nNodes_pC_3rd_level;
+  int nClusters_3rd_level, nNodes_pC_3rd_level;
 
   // Area bounds
   double width, height;
@@ -311,14 +334,22 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 Ptr<Socket>
 Taller1Experiment::SetupPacketReceive(Ipv4Address addr, Ptr<Node> node)
 {
-  std::cout << "Setting up packet receive" << std::endl;
+  std::cout << "Setting up packet receive"
+            << " " << addr << " " << port << std::endl;
   TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
   Ptr<Socket> sink = Socket::CreateSocket(node, tid);
   InetSocketAddress local = InetSocketAddress(addr, port);
   sink->Bind(local);
   sink->SetRecvCallback(MakeCallback(&Taller1Experiment::ReceivePacket, this));
-
+  sink->SetSendCallback(MakeCallback(&Taller1Experiment::SendPacket, this));
   return sink;
+}
+
+// Called when a packet is sent
+void Taller1Experiment::SendPacket(Ptr<Socket> socket, uint32_t)
+{
+  int64_t now = Simulator::Now().GetMicroSeconds();
+  std::cout << now << " Sent one packet!" << std::endl;
 }
 
 // Called when a packet is received
@@ -349,7 +380,7 @@ void Taller1Experiment::Run()
   Config::SetDefault("ns3::WifiRemoteStationManager::NonUnicastMode", StringValue("DsssRate11Mbps"));
 
   // Define channel
-  YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default();
+  YansWifiChannelHelper wifiChannel;
 
   // Using friss propagation loss model
   // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
@@ -376,9 +407,6 @@ void Taller1Experiment::Run()
   wifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
                                "DataMode", StringValue("DsssRate11Mbps"),
                                "ControlMode", StringValue("DsssRate11Mbps"));
-
-  wifiPhy.Set("TxPowerStart", DoubleValue(7.5));
-  wifiPhy.Set("TxPowerEnd", DoubleValue(7.5));
 
   // Set it to adhoc mode
   wifiMac.SetType("ns3::AdhocWifiMac");
@@ -433,11 +461,9 @@ void Taller1Experiment::Run()
 
   // Enable OLSR
   OlsrHelper olsr;
-  Ipv4StaticRoutingHelper staticRouting;
 
   Ipv4ListRoutingHelper list;
-  list.Add(staticRouting, 0); // Second parameter indicates routing priority
-  list.Add(olsr, 10);
+  list.Add(olsr, 100);
 
   InternetStackHelper internet;
   internet.SetRoutingHelper(list); // has effect on the next Install ()
@@ -446,27 +472,31 @@ void Taller1Experiment::Run()
   Ipv4AddressHelper addressAdhoc;
   NS_LOG_INFO("Assign IP Addresses.");
 
-  // For testing purposes we won't subnet yet
-  addressAdhoc.SetBase("10.1.1.0", "255.255.255.0");
-  Ipv4InterfaceContainer adhocInterfaces = addressAdhoc.Assign(lvl1.allDevices);
+  // Assign IP addresses to nodes
+  Ipv4InterfaceContainer adhocInterfaces = lvl1.SetupNetworkAddresses(addressAdhoc);
+
+  // Now clusters heads should have a point to point connection with each other
+  Ipv4InterfaceContainer headInterfaces = lvl1.SetupHeadsAddresses(addressAdhoc);
 
   // Send packets (Doesn't work like manet routing?)
   OnOffHelper onoff1("ns3::UdpSocketFactory", Address());
   onoff1.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
 
   // Poisson traffic is generated by using an exponential random variable
-  onoff1.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=2.0]"));
+  /// onoff1.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=2.0]"));
+  onoff1.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));
 
-  for (int i = 0; i < 10; i++)
+  for (int i = 0; i < 2; i++)
   {
     Ptr<Socket> sink = SetupPacketReceive(adhocInterfaces.GetAddress(i), lvl1.allNodes.Get(i));
 
-    AddressValue remoteAddress(InetSocketAddress(adhocInterfaces.GetAddress(i), port));
+    AddressValue remoteAddress(InetSocketAddress(adhocInterfaces.GetAddress(i), (uint32_t)port));
     onoff1.SetAttribute("Remote", remoteAddress);
 
     Ptr<UniformRandomVariable> var = CreateObject<UniformRandomVariable>();
-    ApplicationContainer temp = onoff1.Install(lvl1.allNodes.Get(i + 10));
-    temp.Start(Seconds(var->GetValue(100.0, 101.0)));
+
+    ApplicationContainer temp = onoff1.Install(lvl1.allNodes.Get(i + 2));
+    temp.Start(Seconds(var->GetValue(20.0, 30.0)));
     temp.Stop(Seconds(totalTime));
   }
 
