@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <tuple>
 
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
@@ -9,21 +10,74 @@
 #include "ns3/applications-module.h"
 #include "ns3/yans-wifi-helper.h"
 #include "ns3/point-to-point-helper.h"
+#include "ns3/stats-module.h"
+
+/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
+/*
+ * Copyright (c) 2011 University of Kansas
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation;
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ * Author: Justin Rohrer <rohrej@ittc.ku.edu>
+ *
+ * James P.G. Sterbenz <jpgs@ittc.ku.edu>, director
+ * ResiliNets Research Group  http://wiki.ittc.ku.edu/resilinets
+ * Information and Telecommunication Technology Center (ITTC)
+ * and Department of Electrical Engineering and Computer Science
+ * The University of Kansas Lawrence, KS USA.
+ *
+ * Work supported in part by NSF FIND (Future Internet Design) Program
+ * under grant CNS-0626918 (Postmodern Internet Architecture),
+ * NSF grant CNS-1050226 (Multilayer Network Resilience Analysis and Experimentation on GENI),
+ * US Department of Defense (DoD), and ITTC at The University of Kansas.
+ */
 
 /*
-Utilities codes
-
-// Get node position within a node container
-for (NodeContainer::Iterator j = nodes.Begin ();
-   j != nodes.End (); ++j)
-{
-     Ptr<Node> object = *j;
-     Ptr<MobilityModel> position = object->GetObject<MobilityModel> ();
-     NS_ASSERT (position != 0);
-    Vector pos = position->GetPosition ();
-    std::cout << "x=" << pos.x << ", y=" << pos.y << ", z=" << pos.z << std::endl;
-}
-*/
+ * This example program allows one to run ns-3 DSDV, AODV, or OLSR under
+ * a typical random waypoint mobility model.
+ *
+ * By default, the simulation runs for 200 simulated seconds, of which
+ * the first 50 are used for start-up time.  The number of nodes is 50.
+ * Nodes move according to RandomWaypointMobilityModel with a speed of
+ * 20 m/s and no pause time within a 300x1500 m region.  The WiFi is
+ * in ad hoc mode with a 2 Mb/s rate (802.11b) and a Friis loss model.
+ * The transmit power is set to 7.5 dBm.
+ *
+ * It is possible to change the mobility and density of the network by
+ * directly modifying the speed and the number of nodes.  It is also
+ * possible to change the characteristics of the network by changing
+ * the transmit power (as power increases, the impact of mobility
+ * decreases and the effective density increases).
+ *
+ * By default, OLSR is used, but specifying a value of 2 for the protocol
+ * will cause AODV to be used, and specifying a value of 3 will cause
+ * DSDV to be used.
+ *
+ * By default, there are 10 source/sink data pairs sending UDP data
+ * at an application rate of 2.048 Kb/s each.    This is typically done
+ * at a rate of 4 64-byte packets per second.  Application data is
+ * started at a random time between 50 and 51 seconds and continues
+ * to the end of the simulation.
+ *
+ * The program outputs a few items:
+ * - packet receptions are notified to stdout such as:
+ *   <timestamp> <node-id> received one packet from <src-address>
+ * - each second, the data reception statistics are tabulated and output
+ *   to a comma-separated value (csv) file
+ * - some tracing and flow monitor configuration that used to work is
+ *   left commented inline in the program
+ */
 
 using namespace ns3;
 
@@ -337,12 +391,23 @@ Taller1Experiment::SetupPacketReceive(Ipv4Address addr, Ptr<Node> node)
   std::cout << "Setting up packet receive"
             << " " << addr << " " << port << std::endl;
   TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
-  Ptr<Socket> sink = Socket::CreateSocket(node, tid);
+
+  // Create a socket to receive packets
+  Ptr<Socket> socket = Socket::CreateSocket(node, tid);
   InetSocketAddress local = InetSocketAddress(addr, port);
-  sink->Bind(local);
-  sink->SetRecvCallback(MakeCallback(&Taller1Experiment::ReceivePacket, this));
-  sink->SetSendCallback(MakeCallback(&Taller1Experiment::SendPacket, this));
-  return sink;
+  socket->Bind(local);
+  socket->SetRecvCallback(MakeCallback(&Taller1Experiment::ReceivePacket, this));
+  socket->SetSendCallback(MakeCallback(&Taller1Experiment::SendPacket, this));
+
+  // Create a sink to calculate throughput
+  // Ptr<PacketSink> sink = CreateObject<PacketSink>();
+  // node->AddApplication(sink);
+
+  // Connect socket and sink
+  // Ptr<Socket> sinkSocket = sink->GetListeningSocket();
+  // socket->Connect(local);
+  // sinkSocket->Bind(local);
+  return socket;
 }
 
 // Called when a packet is sent
@@ -361,10 +426,10 @@ void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
   int64_t now = Simulator::Now().GetMicroSeconds();
   std::cout << now << " Received one packet!" << std::endl;
 
-  // while ((packet = socket->RecvFrom(senderAddress)))
-  // {
-  //   NS_LOG_UNCOND(PrintReceivedPacket(socket, packet, senderAddress));
-  // }
+  while ((packet = socket->RecvFrom(senderAddress)))
+  {
+    // NS_LOG_UNCOND(PrintReceivedPacket(socket, packet, senderAddress));
+  }
 }
 
 void Taller1Experiment::Run()
@@ -372,13 +437,22 @@ void Taller1Experiment::Run()
   Packet::EnablePrinting();
   //  Define simulation time
   double totalTime = 200.0;
+  std::string phyMode("DsssRate11Mbps");
+  std::string rate("2048bps");
+  std::string tr_name("Taller1");
 
-  Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("64"));
-  Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("2048bps"));
+  Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1500"));
+  Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue(rate));
 
   // Set Non-unicastMode rate to unicast mode
-  Config::SetDefault("ns3::WifiRemoteStationManager::NonUnicastMode", StringValue("DsssRate11Mbps"));
+  Config::SetDefault("ns3::WifiRemoteStationManager::NonUnicastMode", StringValue(phyMode));
 
+  // Set mac addresses and wifi standard
+  WifiHelper wifi;
+  wifi.SetStandard(WIFI_STANDARD_80211b);
+
+  // Define wifi phy helper
+  YansWifiPhyHelper wifiPhy;
   // Define channel
   YansWifiChannelHelper wifiChannel;
 
@@ -388,8 +462,6 @@ void Taller1Experiment::Run()
 
   // Use constant speed propagation delay model
   wifiChannel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
-
-  YansWifiPhyHelper wifiPhy;
   // Create the channel of transmission
   wifiPhy.SetChannel(wifiChannel.Create());
 
@@ -397,10 +469,6 @@ void Taller1Experiment::Run()
 
   // Test a single level
   Level lvl1(nClusters_1st_level, nNodes_pC_1st_level, 4500, 0.7, 1);
-
-  // Set mac addresses and wifi standard
-  WifiHelper wifi;
-  wifi.SetStandard(WIFI_STANDARD_80211b);
 
   // Assign MAC Address
   WifiMacHelper wifiMac;
@@ -483,19 +551,24 @@ void Taller1Experiment::Run()
   onoff1.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
 
   // Poisson traffic is generated by using an exponential random variable
-  /// onoff1.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=2.0]"));
-  onoff1.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));
+  onoff1.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=2.0]"));
+  // onoff1.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));
 
-  for (int i = 0; i < 2; i++)
+  // Create packet counter for each node
+  // Ptr<PacketLossCounter> counters[nClusters_1st_level * nNodes_pC_1st_level];
+
+  for (int i = 0; i < 10; i++)
   {
-    Ptr<Socket> sink = SetupPacketReceive(adhocInterfaces.GetAddress(i), lvl1.allNodes.Get(i));
 
-    AddressValue remoteAddress(InetSocketAddress(adhocInterfaces.GetAddress(i), (uint32_t)port));
+    Ptr<Socket> socket = SetupPacketReceive(adhocInterfaces.GetAddress(i), lvl1.allNodes.Get(i));
+
+    // Set remote address (packets sender)
+    AddressValue remoteAddress(InetSocketAddress(adhocInterfaces.GetAddress(i), port));
     onoff1.SetAttribute("Remote", remoteAddress);
 
     Ptr<UniformRandomVariable> var = CreateObject<UniformRandomVariable>();
 
-    ApplicationContainer temp = onoff1.Install(lvl1.allNodes.Get(i + 2));
+    ApplicationContainer temp = onoff1.Install(lvl1.allNodes.Get(i + 10));
     temp.Start(Seconds(var->GetValue(20.0, 30.0)));
     temp.Stop(Seconds(totalTime));
   }
@@ -507,6 +580,8 @@ void Taller1Experiment::Run()
 
   Simulator::Run();
   Simulator::Destroy();
+
+  // Print Packet Loss for each node
 }
 
 int main(int argc, char *argv[])
