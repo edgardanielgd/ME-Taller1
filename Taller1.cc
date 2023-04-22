@@ -11,6 +11,7 @@
 #include "ns3/yans-wifi-helper.h"
 #include "ns3/point-to-point-helper.h"
 #include "ns3/stats-module.h"
+#include "ns3/flow-monitor-module.h"
 
 // Utils
 // TODO: Create a new module and separate files in helper folder
@@ -26,7 +27,7 @@ class Level;
 double TruncatedDistribution(int, double, double, int);
 
 // Globally accessible
-uint32_t simulationTime = 100; // seconds
+uint32_t simulationTime = 200; // seconds
 
 class ClusterNode
 {
@@ -53,7 +54,7 @@ public:
   // Send random traffic around node's levels
   void ConfigureRandomPacketSend(OnOffHelper, AddressValue);
 
-  void SendCallback(Ptr<Socket>, uint32_t);
+  void SendCallback(Ptr<const Packet>);
 };
 
 ClusterNode::ClusterNode(double _transferRate, double _onTime, Ptr<Node> _node)
@@ -88,11 +89,14 @@ void ClusterNode::ConfigureRandomPacketSend(OnOffHelper onOffHelper, AddressValu
   // Install on node
   ApplicationContainer apps = onOffHelper.Install(node);
 
+  // Add packets callbacks
+  apps.Get(0)->TraceConnectWithoutContext("Tx", MakeCallback(&ClusterNode::SendCallback, this));
+
   apps.Start(Seconds(var->GetValue()));
   apps.Stop(Seconds(simulationTime));
 }
 
-void ClusterNode::SendCallback(Ptr<Socket> socket, uint32_t availableBytes)
+void ClusterNode::SendCallback(Ptr<const Packet> packet)
 {
   std::cout << "Packet sent" << std::endl;
 }
@@ -128,6 +132,9 @@ public:
   // Head node of cluster
   Ptr<Node> head;
 
+  // IPv4 address alocator for this cluster (useful for later head assignation)
+  Ipv4AddressHelper addressHelper;
+
   Cluster(int, double, int, double, int);
 
   // Configure and generate network devices container
@@ -137,7 +144,10 @@ public:
       WifiHelper wifi);
 
   // Configure network addresses for node
-  Ipv4InterfaceContainer SetupNetworkAddresses(Ipv4AddressHelper &address);
+  Ipv4InterfaceContainer SetupNetworkAddresses();
+
+  // A head could be added later
+  Ipv4InterfaceContainer AddHead(Ptr<Node>, Ptr<NetDevice>);
 };
 
 Cluster::Cluster(int _nNodes, double _resources, int _level, double _probability, int _index)
@@ -154,11 +164,8 @@ Cluster::Cluster(int _nNodes, double _resources, int _level, double _probability
   // Set cluster index
   index = _index;
 
-  // Create nodes
+  // Create nodes adding cluster's head
   nodes.Create(nNodes);
-
-  // Set head node
-  head = nodes.Get(0);
 
   // Assign resources to each node
   for (int i = 0; i < nNodes; i++)
@@ -167,12 +174,10 @@ Cluster::Cluster(int _nNodes, double _resources, int _level, double _probability
     double resourcesForNode = TruncatedDistribution(
         nNodes, resources, _probability, i);
 
-    // Resources should be distributen in OnTime and TransferRate
-
+    // Resources should be distributed in OnTime and TransferRate
     double onTime = 0.5; // Mean of exponential time
     double transferRate = resourcesForNode / onTime;
     ClusterNode clusterNode(transferRate, onTime, nodes.Get(i));
-
     clusterNodes.push_back(clusterNode);
   }
 }
@@ -186,14 +191,22 @@ void Cluster::SetupDevices(
   devices = wifi.Install(phy, mac, nodes);
 }
 
-Ipv4InterfaceContainer Cluster::SetupNetworkAddresses(Ipv4AddressHelper &address)
+Ipv4InterfaceContainer Cluster::SetupNetworkAddresses()
 {
   // Set subnet mask, unique for each cluster
   std::stringstream s;
   s << "10." << level << "." << index << ".0";
   std::cout << "Assign ip mask: " << s.str() << " to cluster " << index << " at level " << level << std::endl;
-  address.SetBase(ns3::Ipv4Address(s.str().c_str()), "255.255.255.0");
-  return address.Assign(devices);
+  addressHelper.SetBase(ns3::Ipv4Address(s.str().c_str()), "255.255.255.0");
+  return addressHelper.Assign(devices);
+}
+
+Ipv4InterfaceContainer Cluster::AddHead(Ptr<Node> _head, Ptr<NetDevice> upperDevice)
+{
+  head = _head;
+
+  // Assign IP address to head
+  return addressHelper.Assign(upperDevice);
 }
 
 class Level
@@ -266,7 +279,6 @@ void Level::CreateClusters(
     clusters.push_back(cluster);
 
     // Keep track of all nodes in all clusters within this level, useful for mobility configs
-    // allNodes.Add(cluster.nodes);
     std::cout << "Cluster: " << i << " created in level " << index << std::endl;
   }
   std::cout << "All clusters created in level " << index << std::endl;
@@ -304,14 +316,12 @@ double Level::GetTotalResources()
 
 Ipv4InterfaceContainer Level::SetupNetworkAddresses()
 {
-  Ipv4AddressHelper address;
-
   // Configure network addresses for each cluster and save all of network addresses
   Ipv4InterfaceContainer interfaces;
 
   for (int i = 0; i < nClusters; i++)
   {
-    Ipv4InterfaceContainer clusterInterfaces = clusters[i].SetupNetworkAddresses(address);
+    Ipv4InterfaceContainer clusterInterfaces = clusters[i].SetupNetworkAddresses();
     interfacesBetweenNodes.Add(clusterInterfaces);
   }
   std::cout << "All clusters configured with network addresses in level " << index << std::endl;
@@ -330,30 +340,35 @@ Ipv4InterfaceContainer Level::SetupHeadsAddresses(
   {
 
     // In this case there is only one cluster in upper layer
-    Cluster cluster = nextLevel.clusters.at(0);
-    std::cout << cluster.nNodes << " " << cluster.clusterNodes.size() << std::endl;
+    Cluster upperCluster = nextLevel.clusters.at(0);
 
     for (int i = 0; i < nClusters; i++)
     {
       // Get each upper layer's cluster's node
+      Ptr<Node> upperNode = upperCluster.clusterNodes[i].node;
+      Ptr<NetDevice> upperDevice = upperCluster.devices.Get(i);
 
-      Ptr<Node> upperNode = cluster.clusterNodes[i].node;
+      Cluster cluster = clusters.at(i);
 
-      // Lets associate a head from 1st level to a head from 2nd level (1 to 1)
-      PointToPointHelper p2p;
-      p2p.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
-      p2p.SetChannelAttribute("Delay", StringValue("2ms"));
+      // Upper layer node is the head of sublayer cluster
+      cluster.AddHead(upperNode, upperDevice);
 
-      NetDeviceContainer devices = p2p.Install(clusters[i].head, upperNode);
-      devicesBetweenLevels.Add(devices);
+      // The commented section below is another view of heads on clusters
+      // Each head has a p2p connection with a related upper cluster head
+      // PointToPointHelper p2p;
+      // p2p.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
+      // p2p.SetChannelAttribute("Delay", StringValue("2ms"));
+
+      // NetDeviceContainer devices = p2p.Install(clusters[i].head, upperNode);
+      // devicesBetweenLevels.Add(devices);
 
       // Set subnet mask, unique for each cluster
-      std::stringstream s;
-      s << "172.17." << index * 20 + i << ".0";
-      address.SetBase(
-          ns3::Ipv4Address(s.str().c_str()),
-          "255.255.255.0");
-      interfacesBetweenHeads.Add(address.Assign(devices));
+      // std::stringstream s;
+      // s << "172.17." << index * 20 + i << ".0";
+      // address.SetBase(
+      //     ns3::Ipv4Address(s.str().c_str()),
+      //     "255.255.255.0");
+      // interfacesBetweenHeads.Add(address.Assign(devices));
 
       std::cout << "Assigns interfaces between heads" << std::endl;
     }
@@ -514,6 +529,7 @@ void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
 
   while ((packet = socket->RecvFrom(senderAddress)))
   {
+    std::cout << "Received one packet FROM " << senderAddress << std::endl;
     // NS_LOG_UNCOND(PrintReceivedPacket(socket, packet, senderAddress));
   }
 }
@@ -691,6 +707,17 @@ void Taller1Experiment::Run()
         onOffHelper,
         remoteAddress);
   }
+
+  NS_LOG_INFO("Configure Tracing.");
+
+  AsciiTraceHelper ascii;
+  Ptr<OutputStreamWrapper> osw = ascii.CreateFileStream((tr_name + ".tr").c_str());
+  wifiPhy.EnableAsciiAll(osw);
+  MobilityHelper::EnableAsciiAll(ascii.CreateFileStream(tr_name + ".mob"));
+
+  Ptr<FlowMonitor> flowmon;
+  FlowMonitorHelper flowmonHelper;
+  flowmon = flowmonHelper.InstallAll();
 
   // Set simulation time
   Simulator::Stop(Seconds(simulationTime));
