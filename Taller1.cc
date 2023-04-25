@@ -551,8 +551,6 @@ void Taller1Experiment::Run()
   WifiHelper wifi;
   wifi.SetStandard(WIFI_STANDARD_80211b);
 
-  // Define wifi phy helper
-  YansWifiPhyHelper wifiPhy;
   // Define channel
   YansWifiChannelHelper wifiChannel;
 
@@ -562,6 +560,10 @@ void Taller1Experiment::Run()
 
   // Use constant speed propagation delay model
   wifiChannel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
+
+  // Define wifi phy helper
+  YansWifiPhyHelper wifiPhy;
+
   // Create the channel of transmission
   wifiPhy.SetChannel(wifiChannel.Create());
 
@@ -616,9 +618,10 @@ void Taller1Experiment::Run()
   pos.Set("Y", StringValue(ssMaxY.str()));
 
   // Create position allocators based on geometrical boundaries already defined
-  int64_t streamIndex = 0; // used to get consistent mobility across scenarios
+  // int64_t streamIndex = 0; // used to get consistent mobility across scenarios
   Ptr<PositionAllocator> taPositionAlloc = pos.Create()->GetObject<PositionAllocator>();
-  streamIndex += taPositionAlloc->AssignStreams(streamIndex);
+
+  // streamIndex += taPositionAlloc->AssignStreams(streamIndex);
 
   // Define speed (Which is distributed uniformly between 0 and 1 (units are m/s))
   double nodeMinSpeed = 0.0, nodeMaxSpeed = 1.0;
