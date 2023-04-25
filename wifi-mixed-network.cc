@@ -57,6 +57,7 @@
 // The user can also select the payload size and can choose either an UDP or a TCP connection.
 // Example: ./waf --run "wifi-mixed-network --isUdp=1"
 
+// https://www.nsnam.org/docs/release/3.27/doxygen/mixed-wired-wireless_8cc_source.html
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("MixedNetwork");
