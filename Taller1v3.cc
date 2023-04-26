@@ -21,21 +21,221 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("Taller1v3");
 
-int receivedCount = 0;
-int sentCount = 0;
+class Cluster;
+class ClusterNode;
+class Level;
+double TruncatedDistribution(int, double, double, int);
 
-struct Cluster
+// Save a specific node useful info (resources actually)
+class ClusterNode
 {
-    // Actual nodes
-    NodeContainer nodes;
+public:
+    // Mean for OffTime (distribute with a exponential random variable)
+    double meanTraffic;
+
+    // Data rate for OnOffModel
+    double dataRate;
+
+    // Save node index, as a utility
+    int index;
+
+    // Finally, the resources on this node are calculated with the following formula
+    // resources = DataRate * meanTraffic
+    // We will say meanTraffic will be a constant passed as argument for this class
+    // dataRate will be calculated then since we can have a specific number of resources
+
+    // Default constructor
+    ClusterNode() {}
+
+    // Construct with resources and offtime's mean
+
+    // Bool -> Whether the second parameter represents resources or dataRate
+    ClusterNode(int, bool, double, double);
+
+    // Calculate resources
+    double getResources();
+};
+
+ClusterNode::ClusterNode(
+    int _index,
+    bool includesResources,
+    double meanOffTime,
+    double arg2)
+{
+    // Always must be passed as argument
+    index = _index;
+    meanTraffic = meanOffTime;
+
+    if (includesResources)
+    {
+        // arg2 represents resources
+        dataRate = arg2 / meanTraffic;
+    }
+    else
+    {
+        // arg2 represents dataRate directly
+        dataRate = arg2;
+    }
+}
+
+double ClusterNode::getResources()
+{
+    return meanTraffic * dataRate;
+}
+
+// Collection of nodes with a head
+class Cluster
+{
+public:
+    // Nodes without head
+    NodeContainer nodesWithoutHead;
+
+    // Nodes including head (internal cluster architecture)
+    NodeContainer nodesWithHead;
 
     // Nodes interfaces (which connect with each one within the same cluster)
-    // Create inter-heads connections would be a little bit tricky
-    NetDeviceContainer devices;
+    // Create inter-heads connections would be a little bit tricky and will be contemplated
+    // at level instances (Hopefully we will understand it better in this way)
+    NetDeviceContainer devicesWithoutHead;
+
+    // Save a container for a the full set of nodes (including head)
+    NetDeviceContainer devicesWithHead;
 
     // Reference to head node
     Ptr<Node> head;
+
+    // Cluster Index
+    int index;
+
+    // Save an array of clusterNodes
+
+    // Created only for first level clusters, then tested with different values by higher levels
+    std::vector<ClusterNode> nodes;
+
+    // Default constructor
+    Cluster(int, int);
+
+    // Set cluster head
+    void setHead(Ptr<Node>);
+
+    // Create cluster nodes having needed data
+    void createClusterNodes(
+        double, double, double);
+
+    // Configure internal nodes
+    Ipv4InterfaceContainer configure(
+        YansWifiChannelHelper,
+        YansWifiPhyHelper,
+        InternetStackHelper,
+        Ipv4AddressHelper,
+        MobilityHelper,
+        std::string,
+        std::string);
 };
+
+// Create nodes contaner with specified number of nodes
+Cluster::Cluster(int nNodes, int _index)
+{
+    // Save cluster index, useful for some tricks like SSID assignation
+    index = _index;
+
+    // Create internal nodes exluding head
+    nodesWithoutHead.Create(nNodes - 1);
+}
+
+// Create cluster nodes (here we will save some useful data, like node's resources)
+void Cluster::createClusterNodes(double meanOffTime, double totalResouces, double probability)
+{
+    int length = nodesWithHead.GetN();
+
+    for (int j = 0; j < length; j++)
+    {
+        // Get resources for node
+        double nodeResources = TruncatedDistribution(
+            length, totalResouces, probability, j);
+
+        nodes.push_back(ClusterNode(j, true, meanOffTime, nodeResources));
+    }
+}
+
+// Set cluster head (comes from level container)
+void Cluster::setHead(Ptr<Node> _head)
+{
+    head = _head; // Assign new head
+
+    // Create container including cluster head
+    nodesWithHead = NodeContainer(head, nodesWithoutHead);
+}
+
+// Configure connections within this cluster
+Ipv4InterfaceContainer Cluster::configure(
+    YansWifiChannelHelper channel,
+    YansWifiPhyHelper phy,
+    InternetStackHelper internet,
+    Ipv4AddressHelper ipAddrs,
+    MobilityHelper mobilityAdhoc,
+    std::string sSpeed,
+    std::string sPause)
+{
+    // Physical layer
+    WifiHelper nodesWifi;
+    nodesWifi.SetRemoteStationManager("ns3::ArfWifiManager");
+
+    phy.SetChannel(channel.Create());
+
+    // Data link layer
+    WifiMacHelper nodesMac;
+
+    // Each subnetwork (cluster) will be identified by a different SSID
+    std::string ssidString("wifi-infra");
+    std::stringstream ss;
+    ss << index; // Each SSID has the format: wifi-infra-i
+    ssidString += ss.str();
+
+    Ssid ssid = Ssid(ssidString);
+
+    nodesMac.SetType("ns3::StaWifiMac",
+                     "Ssid", SsidValue(ssid));
+    devicesWithoutHead = nodesWifi.Install(phy, nodesMac, nodesWithoutHead);
+
+    // Setup heads as APs
+    nodesMac.SetType("ns3::ApWifiMac",
+                     "Ssid", SsidValue(ssid),
+                     "BeaconInterval", TimeValue(Seconds(2.048)));
+    NetDeviceContainer headDevice = nodesWifi.Install(phy, nodesMac, head);
+
+    // Total cluster devices
+    devicesWithHead.Add(headDevice);
+    devicesWithHead.Add(devicesWithoutHead);
+
+    // Nodes that aren't heads are configured individually only once
+    internet.Install(nodesWithoutHead); // Note head node is already linked with this component
+
+    // It is kinda useful to save interfaces for future connections
+    Ipv4InterfaceContainer assignedAddresses = ipAddrs.Assign(devicesWithHead);
+
+    // Ipv4 assigner will step next subnet outside this cluster
+
+    // Configure mobility model, nodes will follow head within a certain rectangle movement
+    // We consider cleaner to use a simplier model for internal nodes movement within a head
+    // also its even easier to manage movement bounds
+    Ptr<ListPositionAllocator> subnetAlloc =
+        CreateObject<ListPositionAllocator>();
+    for (uint8_t j = 0; j < nodesWithHead.GetN(); j++)
+    {
+        subnetAlloc->Add(Vector(0.0, j, 0.0));
+    }
+    mobilityAdhoc.PushReferenceMobilityModel(head);
+    mobilityAdhoc.SetPositionAllocator(subnetAlloc);
+    mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
+                                   "Bounds", RectangleValue(Rectangle(-10, 10, -10, 10)),
+                                   "Speed", StringValue(sSpeed),
+                                   "Pause", StringValue(sPause));
+    mobilityAdhoc.Install(nodesWithHead);
+
+    // Return assigned addresses
+    return assignedAddresses;
+}
 
 // Truncated distribution assigner
 double
@@ -64,6 +264,12 @@ public:
     // Handle commandline arguments
     void HandleCommandLineArgs(int, char **);
 
+    // Useful callbacks
+
+    void ReceivePacket(Ptr<Socket> socket); // On packets receive
+
+    void OnPacketSent(Ptr<const Packet> packet); // On packet sent
+
 private:
     // UDP sender port number
     int port;
@@ -82,6 +288,14 @@ private:
 
     // Area bounds
     double width, height;
+
+    // Mean of exponential onoff times for nodes
+    double average_mean_time = 0.5;
+
+    // Statistica
+
+    int receivedCount = 0; // Packets
+    int sentCount = 0;     // Packets
 };
 
 // Default constructor
@@ -139,21 +353,21 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 }
 
 // Main process
-void ReceivePacket(Ptr<Socket> socket)
+void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
 {
     // Receive packet
     Ptr<Packet> packet = socket->Recv();
 
     // Print packet
-    std::cout << "Received packet: " << *packet << std::endl;
+    // std::cout << "Received packet: " << *packet << std::endl;
 
     // Increase received count
     receivedCount++;
 }
 
-void OnPacketSent(Ptr<const Packet> packet)
+void Taller1Experiment::OnPacketSent(Ptr<const Packet> packet)
 {
-    std::cout << "Sent a packet :D" << std::endl;
+    // std::cout << "Sent a packet :D" << std::endl;
 
     // Increase sent count
     sentCount++;
@@ -238,11 +452,15 @@ void Taller1Experiment::Run()
 
     // Configure mobility model
 
+    // Firstly, get speed and pause as strings:
+    std::string sSpeed = ssSpeed.str();
+    std::string sPause = ssPause.str();
+
     // Set random way mobility
     MobilityHelper mobilityAdhoc;
     mobilityAdhoc.SetMobilityModel("ns3::RandomWaypointMobilityModel",
-                                   "Speed", StringValue(ssSpeed.str()),
-                                   "Pause", StringValue(ssPause.str()),
+                                   "Speed", StringValue(sSpeed),
+                                   "Pause", StringValue(sPause),
                                    "PositionAllocator", PointerValue(taPositionAlloc));
     mobilityAdhoc.SetPositionAllocator(taPositionAlloc);
 
@@ -268,14 +486,14 @@ void Taller1Experiment::Run()
     // We are now able to create nodes
 
     // Save clusters heads, one for each cluster
-    NodeContainer heads;
-    heads.Create(nClusters_1st_level);
+    NodeContainer headsLvl1;
+    headsLvl1.Create(nClusters_1st_level);
 
     // Configure cluster heads
-    NetDeviceContainer devicesHeads = wifi.Install(phy, mac, heads);
-    internet.Install(heads);
+    NetDeviceContainer devicesHeads = wifi.Install(phy, mac, headsLvl1);
+    internet.Install(headsLvl1);
     ipAddrsHeads.Assign(devicesHeads);
-    mobilityAdhoc.Install(heads);
+    mobilityAdhoc.Install(headsLvl1);
 
     // First level has multiple clusters, each one with one or more nodes
     std::vector<Cluster> first_level_clusters;
@@ -288,83 +506,16 @@ void Taller1Experiment::Run()
     for (uint8_t i = 0; i < nClusters_1st_level; i++)
     {
         // Create cluster
-        Cluster cluster;
+        Cluster cluster(nNodes_pC_1st_level, i);
 
-        // Create node container for this cluster
-        NodeContainer clusterNodesWithoutHead;
-        clusterNodesWithoutHead.Create(nNodes_pC_1st_level - 1);
+        // Set cluster head
+        cluster.setHead(headsLvl1.Get(i));
 
-        // Save cluster head
-        NodeContainer clusterNodes;
-        clusterNodes.Add(heads.Get(i));
-        clusterNodes.Add(clusterNodesWithoutHead);
-
-        // Configure individually each cluster element
-
-        // Physical layer
-        WifiHelper nodesWifi;
-        nodesWifi.SetRemoteStationManager("ns3::ArfWifiManager");
-
-        phy.SetChannel(channel.Create());
-
-        // Data link layer
-        WifiMacHelper nodesMac;
-
-        // Each subnetwork (cluster) will be identified by a different SSID
-        std::string ssidString("wifi-infra");
-        std::stringstream ss;
-        ss << i; // Each SSID has the format: wifi-infra-i
-        ssidString += ss.str();
-
-        Ssid ssid = Ssid(ssidString);
-
-        nodesMac.SetType("ns3::StaWifiMac",
-                         "Ssid", SsidValue(ssid));
-        NetDeviceContainer nodesDevices = nodesWifi.Install(phy, nodesMac, clusterNodesWithoutHead);
-
-        // Setup heads as APs
-        nodesMac.SetType("ns3::ApWifiMac",
-                         "Ssid", SsidValue(ssid),
-                         "BeaconInterval", TimeValue(Seconds(2.048)));
-        NetDeviceContainer headDevice = nodesWifi.Install(phy, nodesMac, heads.Get(i));
-
-        // Total cluster devices
-        NetDeviceContainer clusterDevices;
-        clusterDevices.Add(headDevice);
-        clusterDevices.Add(nodesDevices);
-
-        // Nodes that aren't heads are configured individually only once
-        internet.Install(clusterNodesWithoutHead);
-
-        // Assign IPv4 addresses for cluster nodes
-        // (So heads will have an interface accessible within the cluster)
-
-        // It is kinda useful to save interfaces for future connections
-        lvl1_interfaces.Add(ipAddrs.Assign(clusterDevices));
+        Ipv4InterfaceContainer assignedAddresses = cluster.configure(
+            channel, phy, internet, ipAddrs, mobilityAdhoc, sSpeed, sPause);
 
         // Step next subnet
         ipAddrs.NewNetwork();
-
-        // Configure mobility model
-        Ptr<ListPositionAllocator> subnetAlloc =
-            CreateObject<ListPositionAllocator>();
-        for (uint8_t j = 0; j < nNodes_pC_1st_level; j++)
-        {
-            subnetAlloc->Add(Vector(0.0, j, 0.0));
-        }
-        mobilityAdhoc.PushReferenceMobilityModel(heads.Get(i));
-        mobilityAdhoc.SetPositionAllocator(subnetAlloc);
-        mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
-                                       "Bounds", RectangleValue(Rectangle(-10, 10, -10, 10)),
-                                       "Speed", StringValue(ssSpeed.str()),
-                                       "Pause", StringValue(ssPause.str()));
-        mobilityAdhoc.Install(clusterNodesWithoutHead);
-
-        // Save devices info
-        cluster.devices = clusterDevices;
-
-        // Save nodes for future references
-        cluster.nodes = clusterNodes;
 
         // Add this cluster to first level clusters
         first_level_clusters.push_back(cluster);
@@ -375,11 +526,21 @@ void Taller1Experiment::Run()
 
     OnOffHelper onoff("ns3::UdpSocketFactory", Address());
     onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
-    onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=5]"));
+
+    std::stringstream ss;
+    ss << "ns3::ExponentialRandomVariable[Mean=" << average_mean_time << "]";
+    onoff.SetAttribute("OffTime", StringValue(ss.str()));
+
+    double resources = 5000000; // Resources units
+    double rate = resources / average_mean_time;
+
+    // Set onoff rate
+    // Both Data rate and off time are components of resources
+    onoff.SetAttribute("DataRate", DataRateValue(DataRate(rate)));
 
     // Configure receiver node
     Ptr<Node> receiver = first_level_clusters[nClusters_1st_level - 1]
-                             .nodes.Get(nNodes_pC_1st_level - 1);
+                             .nodesWithHead.Get(nNodes_pC_1st_level - 1);
 
     // Configure packet size
     uint32_t pktSize = 1024;
@@ -392,7 +553,7 @@ void Taller1Experiment::Run()
     Ptr<Socket> recvSink = Socket::CreateSocket(receiver, tid);
     InetSocketAddress local = InetSocketAddress(remoteAddr, port);
     recvSink->Bind(local);
-    recvSink->SetRecvCallback(MakeCallback(&ReceivePacket));
+    recvSink->SetRecvCallback(MakeCallback(&Taller1Experiment::ReceivePacket, this));
 
     // Configure sender node
     AddressValue remoteAddress(InetSocketAddress(remoteAddr, port));
@@ -401,7 +562,7 @@ void Taller1Experiment::Run()
     // Finally send packets
     Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
     var->SetAttribute("Mean", DoubleValue(1.0));
-    ApplicationContainer sendApp = onoff.Install(first_level_clusters[0].nodes.Get(0));
+    ApplicationContainer sendApp = onoff.Install(first_level_clusters[0].nodesWithHead.Get(0));
     sendApp.Start(Seconds(var->GetValue()));
     sendApp.Stop(Seconds(time));
 
@@ -413,7 +574,7 @@ void Taller1Experiment::Run()
 
     // Callback for sent packets
     Config::ConnectWithoutContext("/NodeList/*/ApplicationList/*/$ns3::OnOffApplication/Tx",
-                                  MakeCallback(&OnPacketSent));
+                                  MakeCallback(&Taller1Experiment::OnPacketSent, this));
 
     // Run simulation
     Simulator::Stop(Seconds(time));
