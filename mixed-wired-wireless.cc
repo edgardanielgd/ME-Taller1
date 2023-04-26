@@ -198,59 +198,59 @@ int main(int argc, char *argv[])
 
   // Reset the address base-- all of the CSMA networks will be in
   // the "172.16 address space
-  ipAddrs.SetBase("172.16.0.0", "255.255.255.0");
+  // ipAddrs.SetBase("172.16.0.0", "255.255.255.0");
 
-  for (uint32_t i = 0; i < backboneNodes; ++i)
-  {
-    NS_LOG_INFO("Configuring local area network for backbone node " << i);
-    //
-    // Create a container to manage the nodes of the LAN.  We need
-    // two containers here; one with all of the new nodes, and one
-    // with all of the nodes including new and existing nodes
-    //
-    NodeContainer newLanNodes;
-    newLanNodes.Create(lanNodes - 1);
-    // Now, create the container with all nodes on this link
-    NodeContainer lan(backbone.Get(i), newLanNodes);
-    //
-    // Create the CSMA net devices and install them into the nodes in our
-    // collection.
-    //
-    CsmaHelper csma;
-    csma.SetChannelAttribute("DataRate",
-                             DataRateValue(DataRate(5000000)));
-    csma.SetChannelAttribute("Delay", TimeValue(MilliSeconds(2)));
-    NetDeviceContainer lanDevices = csma.Install(lan);
-    //
-    // Add the IPv4 protocol stack to the new LAN nodes
-    //
-    internet.Install(newLanNodes);
-    //
-    // Assign IPv4 addresses to the device drivers (actually to the
-    // associated IPv4 interfaces) we just created.
-    //
-    ipAddrs.Assign(lanDevices);
-    //
-    // Assign a new network prefix for the next LAN, according to the
-    // network mask initialized above
-    //
-    ipAddrs.NewNetwork();
-    //
-    // The new LAN nodes need a mobility model so we aggregate one
-    // to each of the nodes we just finished building.
-    //
-    MobilityHelper mobilityLan;
-    Ptr<ListPositionAllocator> subnetAlloc =
-        CreateObject<ListPositionAllocator>();
-    for (uint32_t j = 0; j < newLanNodes.GetN(); ++j)
-    {
-      subnetAlloc->Add(Vector(0.0, j * 10 + 10, 0.0));
-    }
-    mobilityLan.PushReferenceMobilityModel(backbone.Get(i));
-    mobilityLan.SetPositionAllocator(subnetAlloc);
-    mobilityLan.SetMobilityModel("ns3::ConstantPositionMobilityModel");
-    mobilityLan.Install(newLanNodes);
-  }
+  // for (uint32_t i = 0; i < backboneNodes; ++i)
+  // {
+  //   NS_LOG_INFO("Configuring local area network for backbone node " << i);
+  //   //
+  //   // Create a container to manage the nodes of the LAN.  We need
+  //   // two containers here; one with all of the new nodes, and one
+  //   // with all of the nodes including new and existing nodes
+  //   //
+  //   NodeContainer newLanNodes;
+  //   newLanNodes.Create(lanNodes - 1);
+  //   // Now, create the container with all nodes on this link
+  //   NodeContainer lan(backbone.Get(i), newLanNodes);
+  //   //
+  //   // Create the CSMA net devices and install them into the nodes in our
+  //   // collection.
+  //   //
+  //   CsmaHelper csma;
+  //   csma.SetChannelAttribute("DataRate",
+  //                            DataRateValue(DataRate(5000000)));
+  //   csma.SetChannelAttribute("Delay", TimeValue(MilliSeconds(2)));
+  //   NetDeviceContainer lanDevices = csma.Install(lan);
+  //   //
+  //   // Add the IPv4 protocol stack to the new LAN nodes
+  //   //
+  //   internet.Install(newLanNodes);
+  //   //
+  //   // Assign IPv4 addresses to the device drivers (actually to the
+  //   // associated IPv4 interfaces) we just created.
+  //   //
+  //   ipAddrs.Assign(lanDevices);
+  //   //
+  //   // Assign a new network prefix for the next LAN, according to the
+  //   // network mask initialized above
+  //   //
+  //   ipAddrs.NewNetwork();
+  //   //
+  //   // The new LAN nodes need a mobility model so we aggregate one
+  //   // to each of the nodes we just finished building.
+  //   //
+  //   MobilityHelper mobilityLan;
+  //   Ptr<ListPositionAllocator> subnetAlloc =
+  //       CreateObject<ListPositionAllocator>();
+  //   for (uint32_t j = 0; j < newLanNodes.GetN(); ++j)
+  //   {
+  //     subnetAlloc->Add(Vector(0.0, j * 10 + 10, 0.0));
+  //   }
+  //   mobilityLan.PushReferenceMobilityModel(backbone.Get(i));
+  //   mobilityLan.SetPositionAllocator(subnetAlloc);
+  //   mobilityLan.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+  //   mobilityLan.Install(newLanNodes);
+  // }
 
   ///////////////////////////////////////////////////////////////////////////
   //                                                                       //
