@@ -67,6 +67,36 @@ public:
     int receivedCount = 0; // Packets
     int sentCount = 0;     // Packets
 
+    // Second layer resources
+    // Note they aren't calculated with OnOffModel
+    // Its just the datarate value for shared wifi channel
+    // Note also this is represented by a String which match a
+    // well-known datarate value denotated as a string
+
+    // Valueas which are going to be used:
+    // DsssRate1Mbps
+    // DsssRate2Mbps
+    // OfdmRate6Mbps
+    // OfdmRate9Mbps
+    // OfdmRate12Mbps
+    // OfdmRate18Mbps
+    // OfdmRate24Mbps
+
+    // In case we want to go further:
+    // OfdmRate36Mbps
+    // OfdmRate48Mbps
+    // OfdmRate54Mbps
+    std::string secondLayerResources = "OfdmRate48Mbps";
+
+    // Resources array for first layer's clusters
+    // Note this parameter can't be passed through console :P
+    std::vector<double> firstLayerResources;
+
+    // Probability
+    // We can of course set each cluster a different probability, but firstly
+    // we will assume they all have the same probability for truncated geometric distribution
+    double probability = 0.5;
+
     // Simulation time
     double simulationTime = 100.0;
 };
@@ -247,7 +277,6 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // So, we can calculate the mean of the exponential distribution
 
     std::stringstream ss;
-    std::cout << "Mean OnTime: " << (trafficRatio / (1 - trafficRatio)) << std::endl;
     ss << "ns3::ExponentialRandomVariable[Mean="
        << (trafficRatio / (1 - trafficRatio)) // This is A_y_i
        << "]";
@@ -255,7 +284,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
 
     // Set onoff rate
     // Both Data rate and off time are components of resources
-    std::cout << "Data rate: " << dataRate << std::endl;
+    // Configure data rate (bps)
     onoff.SetAttribute("DataRate", DataRateValue(DataRate(dataRate)));
 
     // // Configure receiver node
@@ -278,6 +307,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     var->SetAttribute("Mean", DoubleValue((trafficRatio / (1 - trafficRatio))));
     ApplicationContainer sendApp = onoff.Install(node);
     sendApp.Start(Seconds(var->GetValue()));
+    sendApp.Stop(Seconds(parent->simulationTime));
 
     receiver.configureAsReceiver(parent);
 
@@ -286,7 +316,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     {
         std::cout << "Configuring node as sender" << std::endl;
         // Configure packet sink tracker
-        std::string path = "/NodeList/" + std::to_string(index) + "/ApplicationList/*/$ns3::OnOffApplication/Tx";
+        std::string path = "/NodeList/" + std::to_string(node->GetId()) + "/ApplicationList/*/$ns3::OnOffApplication/Tx";
         Config::ConnectWithoutContext(path, MakeCallback(&ClusterNode::OnPacketSent, this));
     }
     else
@@ -473,36 +503,18 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
     cmd.AddValue("nClusters_3rd_level", "Number of clusters in 3rd level", nClusters_3rd_level);
     cmd.AddValue("nNodes_pC_3rd_level", "Number of nodes per cluster in 3rd level", nNodes_pC_3rd_level);
 
+    // Second level resources
+    cmd.AddValue("secondLayerResources", "Resources for second layer", secondLayerResources);
+
     // Space bounds
     cmd.AddValue("width", "Width of the space", width);
     cmd.AddValue("height", "Height of the space", height);
 
     // Simulation time
     cmd.AddValue("simulationTime", "Simulation time in seconds", simulationTime);
+
     // Parse arguments
     cmd.Parse(argc, argv);
-}
-
-// Main process
-void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
-{
-    std::cout << "Received a packet :P" << std::endl;
-    // Receive packet
-    Ptr<Packet> packet = socket->Recv();
-
-    // Print packet
-    // std::cout << "Received packet: " << *packet << std::endl;
-
-    // Increase received count
-    receivedCount++;
-}
-
-void Taller1Experiment::OnPacketSent(Ptr<const Packet> packet)
-{
-    std::cout << "Sent a packet :P" << std::endl;
-
-    // Increase sent count
-    sentCount++;
 }
 
 void Taller1Experiment::Run()
@@ -607,11 +619,9 @@ void Taller1Experiment::Run()
 
         // Physical layer
         WifiHelper nodesWifi;
-        nodesWifi.SetRemoteStationManager("ns3::MinstrelHtWifiManager");
+        nodesWifi.SetRemoteStationManager("ns3::AarfWifiManager");
 
-        // Set bandwidth to channel
         // phy.Set("ChannelNumber", UintegerValue(1));
-        phy.Set("ChannelWidth", UintegerValue(20)); // 20 MHz
         phy.SetChannel(channel.Create());
 
         // Data link layer
@@ -654,9 +664,9 @@ void Taller1Experiment::Run()
 
         // Create nodes
         cluster.createClusterNodes(
-            0.8,
-            10,
-            0.7);
+            0.90,
+            firstLayerResources[i],
+            probability);
 
         std::cout << "Resources: " << cluster.getResources() << std::endl;
 
@@ -701,7 +711,7 @@ void Taller1Experiment::Run()
         // Physical layer
         WifiHelper nodesWifi;
         nodesWifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
-                                          "DataMode", StringValue("OfdmRate54Mbps"));
+                                          "DataMode", StringValue(secondLayerResources));
 
         phy.SetChannel(channel.Create());
 
@@ -752,8 +762,11 @@ void Taller1Experiment::Run()
         // Add this cluster to second level clusters
         second_level.clusters.push_back(cluster);
     }
+    std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
 
     // Now set mobility for lvl 1 nodes
+    std::cout << "[Lvl 1] Placing mobility models..." << std::endl;
+
     for (int i = 0; i < nClusters_1st_level; i++)
     {
         Cluster cluster = first_level.clusters[i];
@@ -777,7 +790,6 @@ void Taller1Experiment::Run()
                                        "Pause", StringValue(sPause));
         mobilityAdhoc.Install(cluster.ns3Nodes);
     }
-    std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
 
     // Config third layer only if needed
     if (nLevels > 2)
@@ -903,19 +915,35 @@ void Taller1Experiment::Run()
 
     // Preparate nodes for simulation
     std::cout << "Preparing random traffic for simulation..." << std::endl;
-    ClusterNode sender = first_level.clusters[0].nodes[0];
-    ClusterNode receiver = first_level.clusters[nClusters_1st_level - 1].nodes[nNodes_pC_1st_level - 1];
 
-    // Create traffic
-    sender.connectWithNode(receiver, this);
+    // Make k random connections between nodes in first level
+    int k = 10;
+    for (int i = 0; i < k; i++)
+    {
+        int senderNodeIndex = rand() % nNodes_pC_1st_level;
+        int receiverNodeIndex = rand() % nNodes_pC_1st_level;
+
+        int senderClusterIndex = rand() % nClusters_1st_level;
+        int receiverClusterIndex = rand() % nClusters_1st_level;
+
+        while (senderNodeIndex == receiverNodeIndex && receiverClusterIndex == senderClusterIndex)
+        {
+            receiverNodeIndex = rand() % nNodes_pC_1st_level;
+            receiverClusterIndex = rand() % nClusters_1st_level;
+        }
+
+        ClusterNode senderNode = first_level.clusters[senderClusterIndex].nodes[senderNodeIndex];
+        ClusterNode receiverNode = first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex];
+        senderNode.connectWithNode(receiverNode, this);
+    }
 
     std::cout << "Running simulation..." << std::endl;
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
-    Simulator::Destroy();
 
     std::cout << "Simulation finished" << std::endl;
+    std::cout << "Level of resources in first layer: " << first_level.getResources() << std::endl;
 
     // Show performance results
     std::cout << "Total packets received: " << receivedCount << std::endl;
@@ -924,6 +952,8 @@ void Taller1Experiment::Run()
     std::cout << "Throughput: " << throughput << " Mbit/s" << std::endl;
     double lossRate = (sentCount - receivedCount) / (double)sentCount;
     std::cout << "Loss rate: " << lossRate << std::endl;
+
+    Simulator::Destroy();
 }
 
 int main(int argc, char *argv[])
@@ -933,6 +963,21 @@ int main(int argc, char *argv[])
 
     // Receive command line args
     experiment.HandleCommandLineArgs(argc, argv);
+
+    // Set further arguments
+
+    // Set values to vector of resources on First Layer
+    // Its size should match the number of first layer cluster
+    double resources[] = {
+        180,
+        180,
+        150,
+        150,
+        120,
+        120};
+
+    experiment.firstLayerResources = std::vector<double>(
+        resources, resources + experiment.nClusters_1st_level);
 
     // Run experiment
     experiment.Run();
