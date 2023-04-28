@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <tuple>
+#include <ctime>
 
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
@@ -238,21 +239,23 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // respectively. Both are distributed exponentially
     // Configure OnOff properties
 
-    // Lets set OnTime as always 1.0 to simplify calculations
-    onoff.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
+    // Lets set OffTIme as always 1.0 to simplify calculations
+    onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
 
     // trafficRatio should be the expected probability
     // of a node being on
     // So, we can calculate the mean of the exponential distribution
 
     std::stringstream ss;
+    std::cout << "Mean OnTime: " << (trafficRatio / (1 - trafficRatio)) << std::endl;
     ss << "ns3::ExponentialRandomVariable[Mean="
-       << (1 / trafficRatio) - 1
+       << (trafficRatio / (1 - trafficRatio)) // This is A_y_i
        << "]";
-    onoff.SetAttribute("OffTime", StringValue(ss.str()));
+    onoff.SetAttribute("OnTime", StringValue(ss.str()));
 
     // Set onoff rate
     // Both Data rate and off time are components of resources
+    std::cout << "Data rate: " << dataRate << std::endl;
     onoff.SetAttribute("DataRate", DataRateValue(DataRate(dataRate)));
 
     // // Configure receiver node
@@ -272,10 +275,9 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
 
     // Finally send packets (current node is the responsible for sending data)
     Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
-    var->SetAttribute("Mean", DoubleValue(1.0));
+    var->SetAttribute("Mean", DoubleValue((trafficRatio / (1 - trafficRatio))));
     ApplicationContainer sendApp = onoff.Install(node);
     sendApp.Start(Seconds(var->GetValue()));
-    sendApp.Stop(Seconds(parent->simulationTime));
 
     receiver.configureAsReceiver(parent);
 
@@ -418,8 +420,7 @@ TruncatedDistribution(
     // Here joins probability density function for truncated geometric distribution
     // Portion of total resources this node will take
 
-    double portion = probability * pow(1 - probability, nodeIndex - 1) / (1 - pow(1 - probability, nPoints));
-
+    double portion = probability * pow(1 - probability, nodeIndex) / (1 - pow(1 - probability, nPoints));
     // Return resources to assign to node
     return portion * totalResources;
 }
@@ -447,7 +448,7 @@ Taller1Experiment::Taller1Experiment()
       // Default height to 500
       height(500),
       // Default simulation time to 100
-      simulationTime(100)
+      simulationTime(1000)
 {
 }
 
@@ -506,8 +507,13 @@ void Taller1Experiment::OnPacketSent(Ptr<const Packet> packet)
 
 void Taller1Experiment::Run()
 {
+
+    // Randomize
+    std::srand(std::time(nullptr));
+    RngSeedManager::SetSeed(std::rand());
+
     Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1472"));
-    Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("100kb/s"));
+    // Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("100kb/s"));
 
     std::cout << "Starting configuration..." << std::endl;
 
@@ -520,13 +526,16 @@ void Taller1Experiment::Run()
 
     // Using friss propagation loss model
     // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
-    // channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
+    channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
 
     // Use constant speed propagation delay model
     channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
 
     // Configure transmission channel
     YansWifiPhyHelper phy;
+
+    phy.Set("TxPowerStart", DoubleValue(100.0));
+    phy.Set("TxPowerEnd", DoubleValue(100.0));
 
     // Define speed (Which is distributed uniformly between 0 and 1 (units are m/s))
     double nodeMinSpeed = 0.0, nodeMaxSpeed = 1.0;
@@ -572,6 +581,9 @@ void Taller1Experiment::Run()
     Ipv4AddressHelper ipAddrs4thLayer;
     ipAddrs3rdLayer.SetBase("172.17.0.0", "255.255.255.0");
 
+    // Mobility helper
+    MobilityHelper mobilityAdhoc;
+
     // We are now able to create nodes
 
     // Initialize all levels
@@ -595,10 +607,10 @@ void Taller1Experiment::Run()
 
         // Physical layer
         WifiHelper nodesWifi;
-        nodesWifi.SetStandard(WIFI_STANDARD_80211n_5GHZ);
         nodesWifi.SetRemoteStationManager("ns3::MinstrelHtWifiManager");
 
         // Set bandwidth to channel
+        // phy.Set("ChannelNumber", UintegerValue(1));
         phy.Set("ChannelWidth", UintegerValue(20)); // 20 MHz
         phy.SetChannel(channel.Create());
 
@@ -637,39 +649,21 @@ void Taller1Experiment::Run()
         Ipv4InterfaceContainer assignedAddresses = ipAddrs1stLayer.Assign(
             cluster.ns3Devices);
 
-        // Ipv4 assigner will step next subnet outside this cluster
-
-        // Configure mobility model, nodes will follow head within a certain rectangle movement
-        // We consider cleaner to use a simplier model for internal nodes movement within a head
-        // also its even easier to manage movement bounds
-        Ptr<ListPositionAllocator> subnetAlloc =
-            CreateObject<ListPositionAllocator>();
-        for (uint8_t j = 0; j < nNodes_pC_1st_level; j++)
-        {
-            subnetAlloc->Add(Vector(0.0, j, 0.0));
-        }
-
-        // Nodes move around cluster's head
-        MobilityHelper mobilityAdhoc;
-        mobilityAdhoc.PushReferenceMobilityModel(cluster.headContainer.Get(0));
-        mobilityAdhoc.SetPositionAllocator(subnetAlloc);
-        mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
-                                       "Bounds", RectangleValue(Rectangle(-20, 20, -20, 20)),
-                                       "Speed", StringValue(sSpeed),
-                                       "Pause", StringValue(sPause));
-        mobilityAdhoc.Install(cluster.ns3Nodes);
-
         // Step next subnet
         ipAddrs1stLayer.NewNetwork();
 
         // Create nodes
         cluster.createClusterNodes(
-            0.5,
-            100,
+            0.8,
+            10,
             0.7);
+
+        std::cout << "Resources: " << cluster.getResources() << std::endl;
 
         // Add this cluster to first level clusters
         first_level.clusters.push_back(cluster);
+
+        // Mobility will be set later after configuring heads mobility
     }
 
     std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
@@ -743,7 +737,6 @@ void Taller1Experiment::Run()
         Ptr<PositionAllocator> taPositionAlloc = pos.Create()->GetObject<PositionAllocator>();
 
         // Set random way mobility on head nodes
-        MobilityHelper mobilityAdhoc;
         mobilityAdhoc.SetMobilityModel("ns3::RandomWaypointMobilityModel",
                                        "Speed", StringValue(sSpeed),
                                        "Pause", StringValue(sPause),
@@ -753,10 +746,6 @@ void Taller1Experiment::Run()
         // Remind that on fitst layer we didn't configured mobility for heads
         mobilityAdhoc.Install(cluster.ns3Nodes);
 
-        // Assign nodes resources
-        cluster.createClusterNodes(
-            5, 100, 0.7);
-
         // Step next subnet
         ipAddrs2ndLayer.NewNetwork();
 
@@ -764,6 +753,30 @@ void Taller1Experiment::Run()
         second_level.clusters.push_back(cluster);
     }
 
+    // Now set mobility for lvl 1 nodes
+    for (int i = 0; i < nClusters_1st_level; i++)
+    {
+        Cluster cluster = first_level.clusters[i];
+
+        // Configure mobility model, nodes will follow head within a certain rectangle movement
+        // We consider cleaner to use a simplier model for internal nodes movement within a head
+        // also its even easier to manage movement bounds
+        Ptr<ListPositionAllocator> subnetAlloc =
+            CreateObject<ListPositionAllocator>();
+        for (uint8_t j = 0; j < nNodes_pC_1st_level; j++)
+        {
+            subnetAlloc->Add(Vector(0.0, j, 0.0));
+        }
+
+        // Nodes move around cluster's head
+        mobilityAdhoc.PushReferenceMobilityModel(cluster.headContainer.Get(0));
+        mobilityAdhoc.SetPositionAllocator(subnetAlloc);
+        mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
+                                       "Bounds", RectangleValue(Rectangle(-20, 20, -20, 20)),
+                                       "Speed", StringValue(sSpeed),
+                                       "Pause", StringValue(sPause));
+        mobilityAdhoc.Install(cluster.ns3Nodes);
+    }
     std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
 
     // Config third layer only if needed
