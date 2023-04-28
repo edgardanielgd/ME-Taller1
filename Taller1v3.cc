@@ -21,10 +21,54 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("Taller1v3");
 
-class Cluster;
-class ClusterNode;
-class Level;
-double TruncatedDistribution(int, double, double, int);
+// Define main class (Architecture)
+class Taller1Experiment
+{
+public:
+    // Define default constructor
+    Taller1Experiment();
+
+    // Define default process
+    void Run();
+
+    // Handle commandline arguments
+    void HandleCommandLineArgs(int, char **);
+
+    // Useful callbacks
+
+    void ReceivePacket(Ptr<Socket> socket); // On packets receive
+
+    void OnPacketSent(Ptr<const Packet> packet); // On packet sent
+
+    // UDP sender port number
+    int port;
+
+    // Number of levels
+    int nLevels;
+
+    // Data for first level
+    int nClusters_1st_level, nNodes_pC_1st_level;
+
+    // Data for second level
+    int nClusters_2nd_level, nNodes_pC_2nd_level;
+
+    // Data for third level
+    int nClusters_3rd_level, nNodes_pC_3rd_level;
+
+    // Area bounds
+    double width, height;
+
+    // Mean of exponential onoff times for nodes
+    double average_mean_time = 0.5;
+
+    // Statistics
+
+    int receivedCount = 0; // Packets
+    int sentCount = 0;     // Packets
+
+    // Simulation time
+    double simulationTime = 100.0;
+};
 
 // Save a specific node useful info (resources actually)
 class ClusterNode
@@ -39,6 +83,18 @@ public:
     // Save node index, as a utility
     int index;
 
+    // Save a reference to ns3::Node
+    Ptr<Node> node;
+
+    // Referenc parent experiment
+    Taller1Experiment parent;
+
+    // Whether this node was already configured as receiver in past or not
+    bool configuredAsReceiver = false;
+
+    // Whether this node was already configured as sender in past or not
+    bool configuredAsSender = false;
+
     // Finally, the resources on this node are calculated with the following formula
     // resources = DataRate * meanTraffic
     // We will say meanTraffic will be a constant passed as argument for this class
@@ -50,38 +106,25 @@ public:
     // Construct with resources and offtime's mean
 
     // Bool -> Whether the second parameter represents resources or dataRate
-    ClusterNode(int, bool, double, double);
+    ClusterNode(int, bool, double, double, Ptr<Node>);
 
     // Calculate resources
     double getResources();
+
+    // Generate and track traffic
+    ApplicationContainer connectWithNode(ClusterNode &, Taller1Experiment);
+
+    // Callbacks
+
+    // On packet receive
+    void ReceivePacket(Ptr<Socket> socket);
+
+    // On packet sent
+    void OnPacketSent(Ptr<const Packet> packet);
+
+    // Configuration as node receiver
+    void configureAsReceiver(Taller1Experiment);
 };
-
-ClusterNode::ClusterNode(
-    int _index,
-    bool includesResources,
-    double meanOffTime,
-    double arg2)
-{
-    // Always must be passed as argument
-    index = _index;
-    meanTraffic = meanOffTime;
-
-    if (includesResources)
-    {
-        // arg2 represents resources
-        dataRate = arg2 / meanTraffic;
-    }
-    else
-    {
-        // arg2 represents dataRate directly
-        dataRate = arg2;
-    }
-}
-
-double ClusterNode::getResources()
-{
-    return meanTraffic * dataRate;
-}
 
 // Collection of nodes with a head
 class Cluster
@@ -113,7 +156,7 @@ public:
     std::vector<ClusterNode> nodes;
 
     // Default constructor
-    Cluster(int, int);
+    Cluster(int);
 
     // Set cluster head
     void setHead(Ptr<Node>);
@@ -133,14 +176,140 @@ public:
         std::string);
 };
 
+double TruncatedDistribution(int, double, double, int);
+
+ClusterNode::ClusterNode(
+    int _index,
+    bool includesResources,
+    double meanOffTime,
+    double arg2,
+    Ptr<Node> _node)
+{
+    // Always must be passed as argument
+    node = _node;
+    index = _index;
+    meanTraffic = meanOffTime;
+
+    if (includesResources)
+    {
+        // arg2 represents resources
+        dataRate = arg2 / meanTraffic;
+    }
+    else
+    {
+        // arg2 represents dataRate directly
+        dataRate = arg2;
+    }
+}
+
+double ClusterNode::getResources()
+{
+    return meanTraffic * dataRate;
+}
+
+// Configure random packet sending
+ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1Experiment _parent)
+{
+    // Firstly, update parent
+    parent = _parent;
+
+    // Configure sender node
+    OnOffHelper onoff("ns3::UdpSocketFactory", Address());
+
+    // // Configure OnOff properties
+    onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
+
+    std::stringstream ss;
+    ss << "ns3::ExponentialRandomVariable[Mean="
+       << "0.5"
+       << "]";
+    onoff.SetAttribute("OffTime", StringValue(ss.str()));
+
+    // Set onoff rate
+    // Both Data rate and off time are components of resources
+    onoff.SetAttribute("DataRate", DataRateValue(DataRate("1Mbps")));
+
+    // // Configure receiver node
+    Ptr<Node> receiverNs3Node = receiver.node;
+
+    // // Configure packet size
+    uint32_t pktSize = 1024;
+    onoff.SetAttribute("PacketSize", UintegerValue(pktSize));
+
+    // Note that head nodes have their "external" address assignated first
+    // So this packet will be sent there on that case
+    Ipv4Address remoteAddr = receiverNs3Node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+
+    // Configure sender node
+    AddressValue remoteAddress(InetSocketAddress(remoteAddr, parent.port));
+    onoff.SetAttribute("Remote", remoteAddress);
+
+    // Finally send packets (current node is the responsible for sending data)
+    Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
+    var->SetAttribute("Mean", DoubleValue(1.0));
+    ApplicationContainer sendApp = onoff.Install(node);
+    sendApp.Start(Seconds(var->GetValue()));
+    sendApp.Stop(Seconds(parent.simulationTime));
+
+    receiver.configureAsReceiver(parent);
+
+    // Check if current node hasn't been configured as a sender node yet
+    if (!configuredAsSender)
+    {
+        std::cout << "Configuring node as sender" << std::endl;
+        // Configure packet sink tracker
+        std::string path = "/NodeList/" + std::to_string(index) + "/ApplicationList/*/$ns3::OnOffApplication/Tx";
+        Config::ConnectWithoutContext(path, MakeCallback(&ClusterNode::OnPacketSent, this));
+    }
+    else
+    {
+        // Otherwise sent packets would be counted twice!
+        configuredAsSender = true;
+    }
+
+    return sendApp;
+}
+
+// Configure node as receiver
+void ClusterNode::configureAsReceiver(Taller1Experiment _parent)
+{
+    if (configuredAsReceiver)
+        return;
+
+    parent = _parent;
+
+    // Configure packet sink tracker
+    TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
+    Ptr<Socket> recvSink = Socket::CreateSocket(node, tid);
+
+    Ipv4Address remoteAddr = node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+
+    InetSocketAddress local = InetSocketAddress(remoteAddr, parent.port);
+    recvSink->Bind(local);
+    recvSink->SetRecvCallback(MakeCallback(&ClusterNode::ReceivePacket, this));
+
+    configuredAsReceiver = true;
+}
+
+// Callback for packet sent BY node
+void ClusterNode::OnPacketSent(Ptr<const Packet> packet)
+{
+    // std::cout << "Packet sent from IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
+    parent.OnPacketSent(packet); // Propagate callback to parent
+}
+
+// Callback for packet received BY node
+void ClusterNode::ReceivePacket(Ptr<Socket> socket)
+{
+    // std::cout << "Packet received on IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
+    parent.ReceivePacket(socket); // Propagate callback to parent
+}
+
 // Create nodes contaner with specified number of nodes
-Cluster::Cluster(int nNodes, int _index)
+Cluster::Cluster(int _index)
 {
     // Save cluster index, useful for some tricks like SSID assignation
     index = _index;
-
-    // Create internal nodes exluding head
-    nodesWithoutHead.Create(nNodes - 1);
 }
 
 // Create cluster nodes (here we will save some useful data, like node's resources)
@@ -154,7 +323,7 @@ void Cluster::createClusterNodes(double meanOffTime, double totalResouces, doubl
         double nodeResources = TruncatedDistribution(
             length, totalResouces, probability, j);
 
-        nodes.push_back(ClusterNode(j, true, meanOffTime, nodeResources));
+        nodes.push_back(ClusterNode(j, true, meanOffTime, nodeResources, nodesWithHead.Get(j)));
     }
 }
 
@@ -251,53 +420,6 @@ TruncatedDistribution(
     return portion * totalResources;
 }
 
-// Define main class
-class Taller1Experiment
-{
-public:
-    // Define default constructor
-    Taller1Experiment();
-
-    // Define default process
-    void Run();
-
-    // Handle commandline arguments
-    void HandleCommandLineArgs(int, char **);
-
-    // Useful callbacks
-
-    void ReceivePacket(Ptr<Socket> socket); // On packets receive
-
-    void OnPacketSent(Ptr<const Packet> packet); // On packet sent
-
-private:
-    // UDP sender port number
-    int port;
-
-    // Number of levels
-    int nLevels;
-
-    // Data for first level
-    int nClusters_1st_level, nNodes_pC_1st_level;
-
-    // Data for second level
-    int nClusters_2nd_level, nNodes_pC_2nd_level;
-
-    // Data for third level
-    int nClusters_3rd_level, nNodes_pC_3rd_level;
-
-    // Area bounds
-    double width, height;
-
-    // Mean of exponential onoff times for nodes
-    double average_mean_time = 0.5;
-
-    // Statistica
-
-    int receivedCount = 0; // Packets
-    int sentCount = 0;     // Packets
-};
-
 // Default constructor
 Taller1Experiment::Taller1Experiment()
     // Default port to 9
@@ -319,7 +441,9 @@ Taller1Experiment::Taller1Experiment()
       // Default width to 500
       width(500),
       // Default height to 500
-      height(500)
+      height(500),
+      // Default simulation time to 100
+      simulationTime(100)
 {
 }
 
@@ -348,6 +472,8 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
     cmd.AddValue("width", "Width of the space", width);
     cmd.AddValue("height", "Height of the space", height);
 
+    // Simulation time
+    cmd.AddValue("simulationTime", "Simulation time in seconds", simulationTime);
     // Parse arguments
     cmd.Parse(argc, argv);
 }
@@ -355,6 +481,7 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 // Main process
 void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
 {
+    std::cout << "Received a packet :P" << std::endl;
     // Receive packet
     Ptr<Packet> packet = socket->Recv();
 
@@ -367,7 +494,7 @@ void Taller1Experiment::ReceivePacket(Ptr<Socket> socket)
 
 void Taller1Experiment::OnPacketSent(Ptr<const Packet> packet)
 {
-    // std::cout << "Sent a packet :D" << std::endl;
+    std::cout << "Sent a packet :P" << std::endl;
 
     // Increase sent count
     sentCount++;
@@ -375,7 +502,6 @@ void Taller1Experiment::OnPacketSent(Ptr<const Packet> packet)
 
 void Taller1Experiment::Run()
 {
-
     Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1472"));
     Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("100kb/s"));
 
@@ -485,101 +611,61 @@ void Taller1Experiment::Run()
 
     // We are now able to create nodes
 
-    // Save clusters heads, one for each cluster
-    NodeContainer headsLvl1;
-    headsLvl1.Create(nClusters_1st_level);
-
-    // Configure cluster heads
-    NetDeviceContainer devicesHeads = wifi.Install(phy, mac, headsLvl1);
-    internet.Install(headsLvl1);
-    ipAddrsHeads.Assign(devicesHeads);
-    mobilityAdhoc.Install(headsLvl1);
-
-    // First level has multiple clusters, each one with one or more nodes
-    std::vector<Cluster> first_level_clusters;
-    first_level_clusters.reserve(nClusters_1st_level);
-
-    // Save all IPv4 addresses assigned
-    Ipv4InterfaceContainer lvl1_interfaces;
-
-    // Create nodes for each cluster in first level
-    for (uint8_t i = 0; i < nClusters_1st_level; i++)
+    if (nLevels == 2)
     {
-        // Create cluster
-        Cluster cluster(nNodes_pC_1st_level, i);
+        // Save clusters heads, one for each cluster
+        NodeContainer headsLvl1;
+        headsLvl1.Create(nClusters_1st_level);
 
-        // Set cluster head
-        cluster.setHead(headsLvl1.Get(i));
+        // Configure cluster heads
+        NetDeviceContainer devicesHeads = wifi.Install(phy, mac, headsLvl1);
+        internet.Install(headsLvl1);
+        ipAddrsHeads.Assign(devicesHeads);
+        mobilityAdhoc.Install(headsLvl1);
 
-        Ipv4InterfaceContainer assignedAddresses = cluster.configure(
-            channel, phy, internet, ipAddrs, mobilityAdhoc, sSpeed, sPause);
+        // First level has multiple clusters, each one with one or more nodes
+        std::vector<Cluster> first_level_clusters;
+        first_level_clusters.reserve(nClusters_1st_level);
 
-        // Step next subnet
-        ipAddrs.NewNetwork();
+        // Save all IPv4 addresses assigned
+        Ipv4InterfaceContainer lvl1_interfaces;
 
-        // Add this cluster to first level clusters
-        first_level_clusters.push_back(cluster);
+        // Create nodes for each cluster in first level
+        for (uint8_t i = 0; i < nClusters_1st_level; i++)
+        {
+            // Create cluster
+            Cluster cluster(i);
+
+            // Set cluster head
+            cluster.setHead(headsLvl1.Get(i));
+
+            // Configure internal nodes
+            Ipv4InterfaceContainer assignedAddresses = cluster.configure(
+                channel, phy, internet, ipAddrs, mobilityAdhoc, sSpeed, sPause);
+
+            // Assign nodes resources
+            cluster.createClusterNodes(
+                5, 100, 0.7);
+
+            // Step next subnet
+            ipAddrs.NewNetwork();
+
+            // Add this cluster to first level clusters
+            first_level_clusters.push_back(cluster);
+        }
+
+        ClusterNode sender = first_level_clusters[0].nodes[0];
+        ClusterNode receiver = first_level_clusters[1].nodes[2];
+
+        sender.connectWithNode(receiver, *this);
     }
 
-    // Lets configure a node to node packet send
-    uint16_t port = 9; // Discard port (RFC 863)}
-
-    OnOffHelper onoff("ns3::UdpSocketFactory", Address());
-    onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
-
-    std::stringstream ss;
-    ss << "ns3::ExponentialRandomVariable[Mean=" << average_mean_time << "]";
-    onoff.SetAttribute("OffTime", StringValue(ss.str()));
-
-    double resources = 5000000; // Resources units
-    double rate = resources / average_mean_time;
-
-    // Set onoff rate
-    // Both Data rate and off time are components of resources
-    onoff.SetAttribute("DataRate", DataRateValue(DataRate(rate)));
-
-    // Configure receiver node
-    Ptr<Node> receiver = first_level_clusters[nClusters_1st_level - 1]
-                             .nodesWithHead.Get(nNodes_pC_1st_level - 1);
-
-    // Configure packet size
-    uint32_t pktSize = 1024;
-    onoff.SetAttribute("PacketSize", UintegerValue(pktSize));
-
-    Ipv4Address remoteAddr = receiver->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-
-    // Configure destination node
-    TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
-    Ptr<Socket> recvSink = Socket::CreateSocket(receiver, tid);
-    InetSocketAddress local = InetSocketAddress(remoteAddr, port);
-    recvSink->Bind(local);
-    recvSink->SetRecvCallback(MakeCallback(&Taller1Experiment::ReceivePacket, this));
-
-    // Configure sender node
-    AddressValue remoteAddress(InetSocketAddress(remoteAddr, port));
-    onoff.SetAttribute("Remote", remoteAddress);
-
-    // Finally send packets
-    Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
-    var->SetAttribute("Mean", DoubleValue(1.0));
-    ApplicationContainer sendApp = onoff.Install(first_level_clusters[0].nodesWithHead.Get(0));
-    sendApp.Start(Seconds(var->GetValue()));
-    sendApp.Stop(Seconds(time));
-
-    // Configure packet sink tracker
-    PacketSinkHelper sink("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), port));
-    ApplicationContainer sinkApp = sink.Install(receiver);
-    sinkApp.Start(Seconds(0.0));
-    sinkApp.Stop(Seconds(time));
-
-    // Callback for sent packets
-    Config::ConnectWithoutContext("/NodeList/*/ApplicationList/*/$ns3::OnOffApplication/Tx",
-                                  MakeCallback(&Taller1Experiment::OnPacketSent, this));
-
     // Run simulation
-    Simulator::Stop(Seconds(time));
+    Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
     Simulator::Destroy();
+
+    std::cout << "Simulation finished" << std::endl;
 
     // Show performance results
     std::cout << "Total packets received: " << receivedCount << std::endl;
