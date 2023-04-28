@@ -75,7 +75,7 @@ class ClusterNode
 {
 public:
     // Mean for OffTime (distribute with a exponential random variable)
-    double meanTraffic;
+    double trafficRatio;
 
     // Data rate for OnOffModel
     double dataRate;
@@ -96,8 +96,8 @@ public:
     bool configuredAsSender = false;
 
     // Finally, the resources on this node are calculated with the following formula
-    // resources = DataRate * meanTraffic
-    // We will say meanTraffic will be a constant passed as argument for this class
+    // resources = DataRate * trafficRatio
+    // We will say trafficRatio will be a constant passed as argument for this class
     // dataRate will be calculated then since we can have a specific number of resources
 
     // Default constructor
@@ -172,6 +172,9 @@ public:
 
     // Other layers will take nodes only
     void setNodes(NodeContainer);
+
+    // Calculate resources
+    double getResources();
 };
 
 // Class to represent a cluster of clusters
@@ -182,6 +185,9 @@ public:
 
     // Default constructor
     Level() {}
+
+    // Calculate expected value of resources
+    double getResources();
 };
 
 double TruncatedDistribution(int, double, double, int);
@@ -196,12 +202,12 @@ ClusterNode::ClusterNode(
     // Always must be passed as argument
     node = _node;
     index = _index;
-    meanTraffic = meanOffTime;
+    trafficRatio = meanOffTime;
 
     if (includesResources)
     {
         // arg2 represents resources
-        dataRate = arg2 / meanTraffic;
+        dataRate = arg2 / trafficRatio;
     }
     else
     {
@@ -212,7 +218,7 @@ ClusterNode::ClusterNode(
 
 double ClusterNode::getResources()
 {
-    return meanTraffic * dataRate;
+    return trafficRatio * dataRate;
 }
 
 // Configure random packet sending
@@ -224,18 +230,30 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // Configure sender node
     OnOffHelper onoff("ns3::UdpSocketFactory", Address());
 
-    // // Configure OnOff properties
-    onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
+    // According to:
+    // https://revistas.udistrital.edu.co/index.php/Tecnura/article/view/6754/8337
+    // The correct portion of time a node is sending data is calculated as:
+    // P = (u_on / (u_on + u_off)), where u_on and u_off represent the portion of time
+    // the node is sending data and the portion of time the node is not sending data
+    // respectively. Both are distributed exponentially
+    // Configure OnOff properties
+
+    // Lets set OnTime as always 1.0 to simplify calculations
+    onoff.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
+
+    // trafficRatio should be the expected probability
+    // of a node being on
+    // So, we can calculate the mean of the exponential distribution
 
     std::stringstream ss;
     ss << "ns3::ExponentialRandomVariable[Mean="
-       << "0.5"
+       << (1 / trafficRatio) - 1
        << "]";
     onoff.SetAttribute("OffTime", StringValue(ss.str()));
 
     // Set onoff rate
     // Both Data rate and off time are components of resources
-    onoff.SetAttribute("DataRate", DataRateValue(DataRate("1Mbps")));
+    onoff.SetAttribute("DataRate", DataRateValue(DataRate(dataRate)));
 
     // // Configure receiver node
     Ptr<Node> receiverNs3Node = receiver.node;
@@ -366,6 +384,32 @@ void Cluster::separateHead(uint32_t headIndex)
     headContainer.Add(head);
 }
 
+// Calculate expected resources for this cluster
+double Cluster::getResources()
+{
+    double resources = 0;
+
+    for (ClusterNode node : nodes)
+    {
+        resources += node.getResources();
+    }
+
+    return resources;
+}
+
+// Calculate level resources
+double Level::getResources()
+{
+    double resources = 0;
+
+    for (Cluster cluster : clusters)
+    {
+        resources += cluster.getResources();
+    }
+
+    return resources;
+}
+
 // Truncated distribution assigner
 double
 TruncatedDistribution(
@@ -465,6 +509,8 @@ void Taller1Experiment::Run()
     Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1472"));
     Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("100kb/s"));
 
+    std::cout << "Starting configuration..." << std::endl;
+
     //
     // Configure physical layer
     //
@@ -476,12 +522,11 @@ void Taller1Experiment::Run()
     // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
     // channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
 
-    // // Use constant speed propagation delay model
+    // Use constant speed propagation delay model
     channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
 
     // Configure transmission channel
     YansWifiPhyHelper phy;
-    phy.SetChannel(channel.Create());
 
     // Define speed (Which is distributed uniformly between 0 and 1 (units are m/s))
     double nodeMinSpeed = 0.0, nodeMaxSpeed = 1.0;
@@ -532,11 +577,13 @@ void Taller1Experiment::Run()
     // Initialize all levels
     Level first_level, second_level, third_level, fourth_level;
 
-    // Always create nodes for the first level (note actually all nodes instance will be created here)
+    std::cout << "Creating first level clusters..." << std::endl;
+
+    // Always create nodes for the first level (note actually all nodes instances will be created here)
     // Create nodes for each cluster in first level
     for (int i = 0; i < nClusters_1st_level; i++)
     {
-        std::cout << "Creating cluster #" << i << std::endl;
+        std::cout << "[Lvl 1] Creating cluster #" << i << std::endl;
         // Create cluster
         Cluster cluster(i);
 
@@ -548,8 +595,11 @@ void Taller1Experiment::Run()
 
         // Physical layer
         WifiHelper nodesWifi;
-        nodesWifi.SetRemoteStationManager("ns3::ArfWifiManager");
+        nodesWifi.SetStandard(WIFI_STANDARD_80211n_5GHZ);
+        nodesWifi.SetRemoteStationManager("ns3::MinstrelHtWifiManager");
 
+        // Set bandwidth to channel
+        phy.Set("ChannelWidth", UintegerValue(20)); // 20 MHz
         phy.SetChannel(channel.Create());
 
         // Data link layer
@@ -604,7 +654,7 @@ void Taller1Experiment::Run()
         mobilityAdhoc.PushReferenceMobilityModel(cluster.headContainer.Get(0));
         mobilityAdhoc.SetPositionAllocator(subnetAlloc);
         mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
-                                       "Bounds", RectangleValue(Rectangle(-100, 100, -100, 100)),
+                                       "Bounds", RectangleValue(Rectangle(-20, 20, -20, 20)),
                                        "Speed", StringValue(sSpeed),
                                        "Pause", StringValue(sPause));
         mobilityAdhoc.Install(cluster.ns3Nodes);
@@ -614,13 +664,15 @@ void Taller1Experiment::Run()
 
         // Create nodes
         cluster.createClusterNodes(
-            5,
-            1000,
+            0.5,
+            100,
             0.7);
 
         // Add this cluster to first level clusters
         first_level.clusters.push_back(cluster);
     }
+
+    std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
 
     if (nLevels == 2)
     {
@@ -632,9 +684,11 @@ void Taller1Experiment::Run()
     }
 
     std::cout << "Creating second level clusters..." << std::endl;
+
     // Get nodes for second cluster (Heads on first level)
     for (int i = 0; i < nClusters_2nd_level; i++)
     {
+        std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
         // Create cluster
         Cluster cluster(i + nClusters_1st_level);
 
@@ -679,12 +733,10 @@ void Taller1Experiment::Run()
         std::stringstream ssMaxX;
         ssMaxX << "ns3::UniformRandomVariable[Min=0.0|Max=" << width << "]";
         pos.Set("X", StringValue(ssMaxX.str()));
-        std::cout << "X: " << ssMaxX.str() << std::endl;
 
         std::stringstream ssMaxY;
         ssMaxY << "ns3::UniformRandomVariable[Min=0.0|Max=" << height << "]";
         pos.Set("Y", StringValue(ssMaxY.str()));
-        std::cout << "Y: " << ssMaxY.str() << std::endl;
 
         // Create position allocators based on geometrical boundaries already defined
         // int64_t streamIndex = 0; // used to get consistent mobility across scenarios
@@ -712,6 +764,8 @@ void Taller1Experiment::Run()
         second_level.clusters.push_back(cluster);
     }
 
+    std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
+
     // Config third layer only if needed
     if (nLevels > 2)
     {
@@ -724,8 +778,11 @@ void Taller1Experiment::Run()
         }
 
         std::cout << "Creating third level clusters..." << std::endl;
+
         for (int i = 0; i < nClusters_3rd_level; i++)
         {
+            std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
+
             // Create cluster
             Cluster cluster(i + nClusters_1st_level + nClusters_2nd_level);
 
@@ -774,10 +831,15 @@ void Taller1Experiment::Run()
             third_level.clusters.push_back(cluster);
         }
 
+        std::cout << "[Lvl 3] Finished clusters creation..." << std::endl;
+
         if (nLevels > 3)
         {
             // Finally, there is a maximum of four levels in case third layer
             // has multiple clusters
+
+            std::cout << "Creating fourth level cluster..." << std::endl;
+            std::cout << "[Lvl 4] Creating cluster #0" << std::endl;
 
             // Create cluster
             Cluster cluster(nClusters_1st_level + nClusters_2nd_level + nClusters_3rd_level);
@@ -821,14 +883,20 @@ void Taller1Experiment::Run()
 
             // Add this cluster to second level clusters
             fourth_level.clusters.push_back(cluster);
+
+            std::cout << "[Lvl 4] Finished clusters creation..." << std::endl;
         }
     }
 
+    // Preparate nodes for simulation
+    std::cout << "Preparing random traffic for simulation..." << std::endl;
     ClusterNode sender = first_level.clusters[0].nodes[0];
-    ClusterNode receiver = first_level.clusters[5].nodes[5];
+    ClusterNode receiver = first_level.clusters[nClusters_1st_level - 1].nodes[nNodes_pC_1st_level - 1];
 
+    // Create traffic
     sender.connectWithNode(receiver, this);
 
+    std::cout << "Running simulation..." << std::endl;
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
