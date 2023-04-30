@@ -91,13 +91,13 @@ public:
     // Probability
     // We can of course set each cluster a different probability, but firstly
     // we will assume they all have the same probability for truncated geometric distribution
-    double probability = 0.5;
+    double probability = 0.1;
 
     // Mean offTime
-    double meanOffTime = 0.1; // Seconds
+    double meanOffTime = 10; // Seconds
 
     // Traffic ratio for nodes
-    double trafficRatio = 0.5;
+    double trafficRatio = 0.99;
 
     // Simulation time
     double simulationTime = 100.0; // Seconds
@@ -277,7 +277,6 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // of a node being on
     // So, we can calculate the mean of the exponential distribution
 
-    std::cout << "Traffic ratio: " << trafficRatio << std::endl;
     std::stringstream ss;
     ss << "ns3::ExponentialRandomVariable[Mean="
        << (trafficRatio * 0.1 / (1 - trafficRatio)) // This is A_y_i
@@ -293,7 +292,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     Ptr<Node> receiverNs3Node = receiver.node;
 
     // // Configure packet size
-    uint32_t pktSize = 512;
+    uint32_t pktSize = 1024;
     onoff.SetAttribute("PacketSize", UintegerValue(pktSize));
 
     // Note that head nodes have their "external" address assignated first
@@ -308,7 +307,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
     var->SetAttribute("Mean", DoubleValue((trafficRatio * 0.1 / (1 - trafficRatio))));
     ApplicationContainer sendApp = onoff.Install(node);
-    sendApp.Start(Seconds(0.0));
+    sendApp.Start(Seconds(30.0));
     sendApp.Stop(Seconds(parent->simulationTime));
 
     receiver.configureAsReceiver(parent);
@@ -316,7 +315,6 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // Check if current node hasn't been configured as a sender node yet
     if (!configuredAsSender)
     {
-        std::cout << "Configuring node as sender" << std::endl;
         // Configure packet sink tracker
         std::string path = "/NodeList/" + std::to_string(node->GetId()) + "/ApplicationList/*/$ns3::OnOffApplication/Tx";
         Config::ConnectWithoutContext(path, MakeCallback(&ClusterNode::OnPacketSent, this));
@@ -347,21 +345,21 @@ void ClusterNode::configureAsReceiver(Taller1Experiment *_parent)
     InetSocketAddress local = InetSocketAddress(remoteAddr, parent->port);
     recvSink->Bind(local);
     recvSink->SetRecvCallback(MakeCallback(&ClusterNode::ReceivePacket, this));
-
+    recvSink->SetRecvPktInfoLimit(1000);
     configuredAsReceiver = true;
 }
 
 // Callback for packet sent BY node
 void ClusterNode::OnPacketSent(Ptr<const Packet> packet)
 {
-    // std::cout << "Packet sent from IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
+    std::cout << "Packet sent from IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
     parent->sentCount++; // Propagate callback to parent
 }
 
 // Callback for packet received BY node
 void ClusterNode::ReceivePacket(Ptr<Socket> socket)
 {
-    // std::cout << "Packet received on IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
+    std::cout << "Packet received on IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
     parent->receivedCount++; // Propagate callback to parent
 }
 
@@ -558,7 +556,7 @@ SimulationResult Taller1Experiment::Run()
 
     // Using friss propagation loss model
     // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
-    channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
+    // channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
 
     // Use constant speed propagation delay model
     channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
@@ -566,8 +564,8 @@ SimulationResult Taller1Experiment::Run()
     // Configure transmission channel
     YansWifiPhyHelper phy;
 
-    phy.Set("TxPowerStart", DoubleValue(100.0));
-    phy.Set("TxPowerEnd", DoubleValue(100.0));
+    // phy.Set("TxPowerStart", DoubleValue(100.0));
+    // phy.Set("TxPowerEnd", DoubleValue(100.0));
 
     // Define speed (Which is distributed uniformly between 0 and 1 (units are m/s))
     double nodeMinSpeed = 0.0, nodeMaxSpeed = 1.0;
@@ -937,7 +935,7 @@ SimulationResult Taller1Experiment::Run()
     std::cout << "Preparing random traffic for simulation..." << std::endl;
 
     // Make k random connections between nodes in first level
-    int k = 10;
+    int k = 1;
     for (int i = 0; i < k; i++)
     {
         int senderNodeIndex = rand() % nNodes_pC_1st_level;
@@ -951,6 +949,12 @@ SimulationResult Taller1Experiment::Run()
             receiverNodeIndex = rand() % nNodes_pC_1st_level;
             receiverClusterIndex = rand() % nClusters_1st_level;
         }
+
+        std::cout << "Connecting IP Address: "
+                  << first_level.clusters[senderClusterIndex].nodes[senderNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+                  << " with IP Address: "
+                  << first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+                  << std::endl;
 
         ClusterNode senderNode = first_level.clusters[senderClusterIndex].nodes[senderNodeIndex];
         ClusterNode receiverNode = first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex];
