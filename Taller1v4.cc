@@ -35,12 +35,6 @@ public:
     // Handle commandline arguments
     void HandleCommandLineArgs(int, char **);
 
-    // Useful callbacks
-
-    void ReceivePacket(Ptr<Socket> socket); // On packets receive
-
-    void OnPacketSent(Ptr<const Packet> packet); // On packet sent
-
     // UDP sender port number
     int port;
 
@@ -59,9 +53,6 @@ public:
     // Area bounds
     double width, height;
 
-    // Mean of exponential onoff times for nodes
-    double average_mean_time = 0.5;
-
     // Statistics
 
     int receivedCount = 0; // Packets
@@ -74,8 +65,6 @@ public:
     // well-known datarate value denotated as a string
 
     // Valueas which are going to be used:
-    // DsssRate1Mbps
-    // DsssRate2Mbps
     // OfdmRate6Mbps
     // OfdmRate9Mbps
     // OfdmRate12Mbps
@@ -173,12 +162,6 @@ public:
     // All devices (physic interfaces within this cluster)
     NetDeviceContainer ns3Devices;
 
-    // All devices excluding head
-    NetDeviceContainer ns3DevicesExcludingHead;
-
-    // Head device
-    NetDeviceContainer headDevice;
-
     // Cluster Index
     int index;
 
@@ -226,14 +209,14 @@ double TruncatedDistribution(int, double, double, int);
 ClusterNode::ClusterNode(
     int _index,
     bool includesResources,
-    double meanOffTime,
+    double _trafficRatio,
     double arg2,
     Ptr<Node> _node)
 {
     // Always must be passed as argument
     node = _node;
     index = _index;
-    trafficRatio = meanOffTime;
+    trafficRatio = _trafficRatio;
 
     if (includesResources)
     {
@@ -384,7 +367,7 @@ void Cluster::setNodes(NodeContainer _nodes)
 }
 
 // Create cluster nodes (here we will save some useful data, like node's resources)
-void Cluster::createClusterNodes(double meanOffTime, double totalResouces, double probability)
+void Cluster::createClusterNodes(double trafficRatio, double totalResouces, double probability)
 {
     int length = ns3Nodes.GetN();
 
@@ -394,7 +377,7 @@ void Cluster::createClusterNodes(double meanOffTime, double totalResouces, doubl
         double nodeResources = TruncatedDistribution(
             length, totalResouces, probability, j);
 
-        nodes.push_back(ClusterNode(j, true, meanOffTime, nodeResources, ns3Nodes.Get(j)));
+        nodes.push_back(ClusterNode(j, true, trafficRatio, nodeResources, ns3Nodes.Get(j)));
     }
 }
 
@@ -525,7 +508,6 @@ void Taller1Experiment::Run()
     RngSeedManager::SetSeed(std::rand());
 
     Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1472"));
-    // Config::SetDefault("ns3::OnOffApplication::DataRate", StringValue("100kb/s"));
 
     std::cout << "Starting configuration..." << std::endl;
 
@@ -639,18 +621,18 @@ void Taller1Experiment::Run()
                          "Ssid", SsidValue(ssid));
 
         // Nodes will connect to their cluster head (which is actually an AP on this case)
-        cluster.ns3DevicesExcludingHead = nodesWifi.Install(
+        NetDeviceContainer ns3DevicesExcludingHead = nodesWifi.Install(
             phy, nodesMac, cluster.ns3NodesExcludingHead);
 
         // Setup heads as APs
         nodesMac.SetType("ns3::ApWifiMac",
                          "Ssid", SsidValue(ssid),
                          "BeaconInterval", TimeValue(Seconds(2.048)));
-        cluster.headDevice = nodesWifi.Install(phy, nodesMac, cluster.headContainer);
+        NetDeviceContainer headDevice = nodesWifi.Install(phy, nodesMac, cluster.headContainer);
 
         // Total cluster devices
-        cluster.ns3Devices.Add(cluster.headDevice);
-        cluster.ns3Devices.Add(cluster.ns3DevicesExcludingHead);
+        cluster.ns3Devices.Add(headDevice);
+        cluster.ns3Devices.Add(ns3DevicesExcludingHead);
 
         // All nodes are including in OLSR protocol
         internet.Install(cluster.ns3Nodes);
