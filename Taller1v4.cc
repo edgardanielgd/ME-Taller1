@@ -22,6 +22,13 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("Taller1v4");
 
+struct SimulationResult
+{
+    // useful for saving simulation statistics and useful data
+    double throughput;
+    double lossRate;
+};
+
 // Define main class (Architecture)
 class Taller1Experiment
 {
@@ -30,7 +37,7 @@ public:
     Taller1Experiment();
 
     // Define default process
-    void Run();
+    SimulationResult Run();
 
     // Handle commandline arguments
     void HandleCommandLineArgs(int, char **);
@@ -86,8 +93,14 @@ public:
     // we will assume they all have the same probability for truncated geometric distribution
     double probability = 0.5;
 
+    // Mean offTime
+    double meanOffTime = 0.1; // Seconds
+
+    // Traffic ratio for nodes
+    double trafficRatio = 0.5;
+
     // Simulation time
-    double simulationTime = 100.0;
+    double simulationTime = 100.0; // Seconds
 };
 
 // Save a specific node useful info (resources actually)
@@ -252,16 +265,22 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     // respectively. Both are distributed exponentially
     // Configure OnOff properties
 
+    std::stringstream ssOffTime;
+    ssOffTime << "ns3::ExponentialRandomVariable[Mean="
+              << parent->meanOffTime
+              << "]";
+
     // Lets set OffTIme as always 1.0 to simplify calculations
-    onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=1.0]"));
+    onoff.SetAttribute("OffTime", StringValue(ssOffTime.str()));
 
     // trafficRatio should be the expected probability
     // of a node being on
     // So, we can calculate the mean of the exponential distribution
 
+    std::cout << "Traffic ratio: " << trafficRatio << std::endl;
     std::stringstream ss;
     ss << "ns3::ExponentialRandomVariable[Mean="
-       << (trafficRatio / (1 - trafficRatio)) // This is A_y_i
+       << (trafficRatio * 0.1 / (1 - trafficRatio)) // This is A_y_i
        << "]";
     onoff.SetAttribute("OnTime", StringValue(ss.str()));
 
@@ -274,7 +293,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     Ptr<Node> receiverNs3Node = receiver.node;
 
     // // Configure packet size
-    uint32_t pktSize = 1024;
+    uint32_t pktSize = 512;
     onoff.SetAttribute("PacketSize", UintegerValue(pktSize));
 
     // Note that head nodes have their "external" address assignated first
@@ -287,9 +306,9 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
 
     // Finally send packets (current node is the responsible for sending data)
     Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
-    var->SetAttribute("Mean", DoubleValue((trafficRatio / (1 - trafficRatio))));
+    var->SetAttribute("Mean", DoubleValue((trafficRatio * 0.1 / (1 - trafficRatio))));
     ApplicationContainer sendApp = onoff.Install(node);
-    sendApp.Start(Seconds(var->GetValue()));
+    sendApp.Start(Seconds(0.0));
     sendApp.Stop(Seconds(parent->simulationTime));
 
     receiver.configureAsReceiver(parent);
@@ -489,6 +508,10 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
     // Second level resources
     cmd.AddValue("secondLayerResources", "Resources for second layer", secondLayerResources);
 
+    // Traffic ratio and mean offtime params
+    cmd.AddValue("trafficRatio", "Traffic ratio per node", trafficRatio);
+    cmd.AddValue("meanOffTime", "Mean offtime per node", meanOffTime);
+
     // Space bounds
     cmd.AddValue("width", "Width of the space", width);
     cmd.AddValue("height", "Height of the space", height);
@@ -515,7 +538,7 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
         resources, resources + nClusters_1st_level);
 }
 
-void Taller1Experiment::Run()
+SimulationResult Taller1Experiment::Run()
 {
 
     // Randomize
@@ -661,7 +684,7 @@ void Taller1Experiment::Run()
 
         // Create nodes
         cluster.createClusterNodes(
-            0.90,
+            trafficRatio,
             firstLayerResources[i],
             probability);
 
@@ -946,11 +969,16 @@ void Taller1Experiment::Run()
     std::cout << "Total packets received: " << receivedCount << std::endl;
     std::cout << "Total packets sent: " << sentCount << std::endl;
     double throughput = receivedCount / simulationTime; // Pkt / s
-    std::cout << "Throughput: " << throughput << " Mbit/s" << std::endl;
     double lossRate = (sentCount - receivedCount) / (double)sentCount;
-    std::cout << "Loss rate: " << lossRate << std::endl;
+
+    // Generate simulation results data container
+    SimulationResult results;
+    results.throughput = throughput;
+    results.lossRate = lossRate;
 
     Simulator::Destroy();
+
+    return results;
 }
 
 int main(int argc, char *argv[])
@@ -962,7 +990,10 @@ int main(int argc, char *argv[])
     experiment.HandleCommandLineArgs(argc, argv);
 
     // Run experiment
-    experiment.Run();
+    SimulationResult experimentResult = experiment.Run();
+    std::cout << "Throughput: " << experimentResult.throughput << " Mbit/s" << std::endl;
+    std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
+    // Do something with results
 
     return 0;
 }
