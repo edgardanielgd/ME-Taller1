@@ -527,12 +527,12 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
     // Set values to vector of resources on First Layer
     // Its size should match the number of first layer cluster
     double resources[] = {
-        180,
-        180,
-        150,
-        150,
-        120,
-        120};
+        180000,
+        180000,
+        150000,
+        150000,
+        120000,
+        120000};
 
     firstLayerResources = std::vector<double>(
         resources, resources + nClusters_1st_level);
