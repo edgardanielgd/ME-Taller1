@@ -498,6 +498,21 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 
     // Parse arguments
     cmd.Parse(argc, argv);
+
+    // Set further arguments
+
+    // Set values to vector of resources on First Layer
+    // Its size should match the number of first layer cluster
+    double resources[] = {
+        180,
+        180,
+        150,
+        150,
+        120,
+        120};
+
+    firstLayerResources = std::vector<double>(
+        resources, resources + nClusters_1st_level);
 }
 
 void Taller1Experiment::Run()
@@ -945,21 +960,6 @@ int main(int argc, char *argv[])
 
     // Receive command line args
     experiment.HandleCommandLineArgs(argc, argv);
-
-    // Set further arguments
-
-    // Set values to vector of resources on First Layer
-    // Its size should match the number of first layer cluster
-    double resources[] = {
-        180,
-        180,
-        150,
-        150,
-        120,
-        120};
-
-    experiment.firstLayerResources = std::vector<double>(
-        resources, resources + experiment.nClusters_1st_level);
 
     // Run experiment
     experiment.Run();
