@@ -345,7 +345,6 @@ void ClusterNode::configureAsReceiver(Taller1Experiment *_parent)
     InetSocketAddress local = InetSocketAddress(remoteAddr, parent->port);
     recvSink->Bind(local);
     recvSink->SetRecvCallback(MakeCallback(&ClusterNode::ReceivePacket, this));
-    recvSink->SetRecvPktInfoLimit(1000);
     configuredAsReceiver = true;
 }
 
