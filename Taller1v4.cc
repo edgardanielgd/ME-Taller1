@@ -1,3 +1,22 @@
+/**
+ * Universidad Nacional de Colombia - Sede Bogotá
+ * Taller 1 - Modelos estocásticos y simulación en computación y comunicaciones
+ *
+ * Presentado por
+ * Edgar Daniel Gonzalez Diaz
+ * Miguel Angel Puentes Cespedes
+ * Bryan Smith Colorado Lopez
+ * Juan Camilo Zambrano Lopez
+ * Jhonatan Steven Rodriguez Ibañez
+ *
+ * Este programa replica los resultados del paper "Estimation of a growth factor to achieve scalable ad hoc networks"
+ * elaborado por los autores: Juan Pablo Ospina y Jorge Ortiz (https://revistas.javeriana.edu.co/index.php/iyu/article/view/16695).
+ *
+ * El objetivo es simular una red ad-hoc de dos y tres niveles que permita estimar los recursos necesarios para lograr
+ * una red escalable en cada una de las capas.
+ *
+ * Los analisis y la documentación elaborada se encuentran disponibles en los demas archivos adjuntos.
+ */
 #include <fstream>
 #include <iostream>
 #include <ctime>
