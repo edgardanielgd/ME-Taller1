@@ -1,6 +1,5 @@
 #include <fstream>
 #include <iostream>
-#include <tuple>
 #include <ctime>
 
 #include "ns3/core-module.h"
@@ -14,9 +13,6 @@
 #include "ns3/yans-wifi-helper.h"
 #include "ns3/point-to-point-helper.h"
 #include "ns3/stats-module.h"
-
-// Utils
-// as described here: https://www.nsnam.org/docs/manual/html/new-modules.html
 
 using namespace ns3;
 
