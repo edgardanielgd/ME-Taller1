@@ -71,12 +71,28 @@ public:
     // Note also this is represented by a String which match a
     // well-known datarate value denotated as a string
 
-    // Valueas which are going to be used:
+    // Valueas which can be used:
     // OfdmRate6Mbps
     // OfdmRate9Mbps
     // OfdmRate12Mbps
     // OfdmRate18Mbps
     // OfdmRate24Mbps
+    // OfdmRate1_5MbpsBW5MHz
+    // OfdmRate2_25MbpsBW5MHz
+    // OfdmRate3MbpsBW5MHz
+    // OfdmRate4_5MbpsBW5MHz
+    // OfdmRate6MbpsBW5MHz
+    // OfdmRate9MbpsBW5MHz
+    // OfdmRate12MbpsBW5MHz
+    // OfdmRate13_5MbpsBW5MHz
+    // OfdmRate3MbpsBW10MHz
+    // OfdmRate4_5MbpsBW10MHz
+    // OfdmRate6MbpsBW10MHz
+    // OfdmRate9MbpsBW10MHz
+    // OfdmRate12MbpsBW10MHz
+    // OfdmRate18MbpsBW10MHz
+    // OfdmRate24MbpsBW10MHz
+    // OfdmRate27MbpsBW10MHz
 
     // In case we want to go further:
     // OfdmRate36Mbps
@@ -352,6 +368,8 @@ void ClusterNode::configureAsReceiver(Taller1Experiment *_parent)
 // Callback for packet sent BY node
 void ClusterNode::OnPacketSent(Ptr<const Packet> packet)
 {
+    // std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
+    //           << "Sent one packet" << std::endl;
     parent->sentCount++; // Propagate callback to parent
 }
 
@@ -362,7 +380,7 @@ void ClusterNode::ReceivePacket(Ptr<Socket> socket)
     {
         // Multiple packets could have reached, they must be "read" by means of Recv()
         socket->Recv();
-        // //std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
+        // std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
         //           << "Received one packet" << std::endl;
         parent->receivedCount++; // Propagate callback to parent
     }
@@ -471,13 +489,13 @@ Taller1Experiment::Taller1Experiment()
       // Default number of nodes per cluster in 1st level to 6
       nNodes_pC_1st_level(6),
       // Default number of clusters in 2nd level to 2
-      nClusters_2nd_level(2),
+      nClusters_2nd_level(1),
       // Default number of nodes per cluster in 2nd level to 2
-      nNodes_pC_2nd_level(3),
+      nNodes_pC_2nd_level(6),
       // Default number of clusters in 3rd level to 1
       nClusters_3rd_level(1),
       // Default number of nodes per cluster in 3rd level to 2
-      nNodes_pC_3rd_level(2),
+      nNodes_pC_3rd_level(1),
       // Default width to 500
       width(500),
       // Default height to 500
@@ -492,19 +510,30 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv, double reso
      * Get console parameters
      */
     CommandLine cmd(__FILE__);
-    cmd.AddValue("nLevels", "Number of levels of this cluster", nLevels);
+
+    // Solving a bug which doesn't allow you to read integers from command line
+    double nc1l = nClusters_1st_level;
+    double nn1l = nNodes_pC_1st_level;
+    double nc2l = nClusters_2nd_level;
+    double nn2l = nNodes_pC_2nd_level;
+    double nc3l = nClusters_3rd_level;
+    double nn3l = nNodes_pC_3rd_level;
+    double nlevels = nLevels;
+
+    // Number of hierarchy levels
+    cmd.AddValue("nLevels", "Number of levels of this cluster", nlevels);
 
     // Data for first level
-    cmd.AddValue("nClusters_1st_level", "Number of clusters in 1st level", nClusters_1st_level);
-    cmd.AddValue("nNodes_pC_1st_level", "Number of nodes per cluster in 1st level", nNodes_pC_1st_level);
+    cmd.AddValue("nClusters_1st_level", "Number of clusters in 1st level", nc1l);
+    cmd.AddValue("nNodes_pC_1st_level", "Number of nodes per cluster in 1st level", nn1l);
 
     // Data for second level
-    cmd.AddValue("nClusters_2nd_level", "Number of clusters in 2nd level", nClusters_2nd_level);
-    cmd.AddValue("nNodes_pC_2nd_level", "Number of nodes per cluster in 2nd level", nNodes_pC_2nd_level);
+    cmd.AddValue("nClusters_2nd_level", "Number of clusters in 2nd level", nc2l);
+    cmd.AddValue("nNodes_pC_2nd_level", "Number of nodes per cluster in 2nd level", nn2l);
 
     // Data for third level
-    cmd.AddValue("nClusters_3rd_level", "Number of clusters in 3rd level", nClusters_3rd_level);
-    cmd.AddValue("nNodes_pC_3rd_level", "Number of nodes per cluster in 3rd level", nNodes_pC_3rd_level);
+    cmd.AddValue("nClusters_3rd_level", "Number of clusters in 3rd level", nc3l);
+    cmd.AddValue("nNodes_pC_3rd_level", "Number of nodes per cluster in 3rd level", nn3l);
 
     // Second level resources
     cmd.AddValue("secondLayerResources", "Resources for second layer", secondLayerResources);
@@ -523,6 +552,15 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv, double reso
     // Parse arguments
     cmd.Parse(argc, argv);
 
+    // Set values to class attributes
+    nLevels = (int)nlevels;
+    nClusters_1st_level = (int)nc1l;
+    nNodes_pC_1st_level = (int)nn1l;
+    nClusters_2nd_level = (int)nc2l;
+    nNodes_pC_2nd_level = (int)nn2l;
+    nClusters_3rd_level = (int)nc3l;
+    nNodes_pC_3rd_level = (int)nn3l;
+
     // Set further arguments
 
     // Set values to vector of resources on First Layer
@@ -534,11 +572,12 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv, double reso
 
 SimulationResult Taller1Experiment::Run()
 {
+
     // Randomize
     std::srand(std::time(nullptr));
     RngSeedManager::SetSeed(std::rand());
 
-    // std::cout << "Starting configuration..." << std::endl;
+    std::cout << "Starting configuration..." << std::endl;
 
     //
     // Configure physical layer
@@ -613,13 +652,14 @@ SimulationResult Taller1Experiment::Run()
     // Initialize all levels
     Level first_level, second_level, third_level, fourth_level;
 
-    // std::cout << "Creating first level clusters..." << std::endl;
+    std::cout << "Creating first level clusters..." << std::endl;
 
     // Always create nodes for the first level (note actually all nodes instances will be created here)
     // Create nodes for each cluster in first level
     for (int i = 0; i < nClusters_1st_level; i++)
     {
-        // std::cout << "[Lvl 1] Creating cluster #" << i << std::endl;
+
+        std::cout << "[Lvl 1] Creating cluster #" << i << std::endl;
         //  Create cluster
         Cluster cluster(i);
 
@@ -680,7 +720,7 @@ SimulationResult Taller1Experiment::Run()
             firstLayerResources[i],
             probability);
 
-        // std::cout << "Resources in this cluster: " << cluster.getResources() << std::endl;
+        std::cout << "Resources in this cluster: " << cluster.getResources() << std::endl;
 
         // Add this cluster to first level clusters
         first_level.clusters.push_back(cluster);
@@ -688,18 +728,17 @@ SimulationResult Taller1Experiment::Run()
         // Mobility will be set later after configuring heads mobility
     }
 
-    // std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
+    std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
 
     if (nLevels == 2)
     {
-
         // In a two layer architecture, there is actually one single cluster in second level
         // And its nodes are sublayer's clusters heads
         nClusters_2nd_level = 1;
         nNodes_pC_2nd_level = nClusters_1st_level;
     }
 
-    // std::cout << "Creating second level clusters..." << std::endl;
+    std::cout << "Creating second level clusters..." << std::endl;
 
     // Get nodes for second cluster (Heads on first level)
     for (int i = 0; i < nClusters_2nd_level; i++)
@@ -774,10 +813,10 @@ SimulationResult Taller1Experiment::Run()
         // Add this cluster to second level clusters
         second_level.clusters.push_back(cluster);
     }
-    // std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
+    std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
 
     // Now set mobility for lvl 1 nodes
-    // std::cout << "[Lvl 1] Placing mobility models..." << std::endl;
+    std::cout << "[Lvl 1] Placing mobility models..." << std::endl;
 
     for (int i = 0; i < nClusters_1st_level; i++)
     {
@@ -814,11 +853,11 @@ SimulationResult Taller1Experiment::Run()
             nNodes_pC_3rd_level = nClusters_2nd_level;
         }
 
-        // std::cout << "Creating third level clusters..." << std::endl;
+        std::cout << "Creating third level clusters..." << std::endl;
 
         for (int i = 0; i < nClusters_3rd_level; i++)
         {
-            // std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
+            std::cout << "[Lvl 3] Creating cluster #" << i << std::endl;
 
             // Create cluster
             Cluster cluster(i + nClusters_1st_level + nClusters_2nd_level);
@@ -829,7 +868,6 @@ SimulationResult Taller1Experiment::Run()
             for (int j = 0; j < nNodes_pC_3rd_level; j++)
             {
                 // Add head as an element for cluster
-                // std::cout << (i * nNodes_pC_3rd_level + j) * nNodes_pC_2nd_level << std::endl;
                 nodes.Add(
                     first_level.clusters[i * nNodes_pC_3rd_level * nNodes_pC_2nd_level]
                         .ns3Nodes.Get(1));
@@ -868,15 +906,15 @@ SimulationResult Taller1Experiment::Run()
             third_level.clusters.push_back(cluster);
         }
 
-        // std::cout << "[Lvl 3] Finished clusters creation..." << std::endl;
+        std::cout << "[Lvl 3] Finished clusters creation..." << std::endl;
 
         if (nLevels > 3)
         {
             // Finally, there is a maximum of four levels in case third layer
             // has multiple clusters
 
-            // std::cout << "Creating fourth level cluster..." << std::endl;
-            // std::cout << "[Lvl 4] Creating cluster #0" << std::endl;
+            std::cout << "Creating fourth level cluster..." << std::endl;
+            std::cout << "[Lvl 4] Creating cluster #0" << std::endl;
 
             // Create cluster
             Cluster cluster(nClusters_1st_level + nClusters_2nd_level + nClusters_3rd_level);
@@ -921,12 +959,12 @@ SimulationResult Taller1Experiment::Run()
             // Add this cluster to second level clusters
             fourth_level.clusters.push_back(cluster);
 
-            // std::cout << "[Lvl 4] Finished clusters creation..." << std::endl;
+            std::cout << "[Lvl 4] Finished clusters creation..." << std::endl;
         }
     }
 
     // Preparate nodes for simulation
-    // std::cout << "Preparing random traffic for simulation..." << std::endl;
+    std::cout << "Preparing random traffic for simulation..." << std::endl;
 
     // Make k random connections between nodes in first level
     int k = 20;
@@ -944,24 +982,24 @@ SimulationResult Taller1Experiment::Run()
             receiverClusterIndex = rand() % nClusters_1st_level;
         }
 
-        // std::cout << "Connecting IP Address: "
-        // << first_level.clusters[senderClusterIndex].nodes[senderNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
-        // << " with IP Address: "
-        // << first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
-        // << std::endl;
+        std::cout << "Connecting IP Address: "
+                  << first_level.clusters[senderClusterIndex].nodes[senderNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+                  << " with IP Address: "
+                  << first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+                  << std::endl;
 
         ClusterNode senderNode = first_level.clusters[senderClusterIndex].nodes[senderNodeIndex];
         ClusterNode receiverNode = first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex];
         senderNode.connectWithNode(receiverNode, this);
     }
 
-    // std::cout << "Running simulation..." << std::endl;
+    std::cout << "Running simulation..." << std::endl;
 
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
 
-    // std::cout << "Simulation finished" << std::endl;
+    std::cout << "Simulation finished" << std::endl;
     std::cout << "Level of resources in first layer: " << first_level.getResources() << std::endl;
 
     // Show performance results
@@ -980,9 +1018,11 @@ SimulationResult Taller1Experiment::Run()
     return results;
 }
 
-int main(int argc, char *argv[])
+// Useful for resources testing
+int testPhyRatio(int argc, char *argv[])
 {
-    int ncases = 10;
+    // Time::SetResolution(Time::US);
+    int ncases = 50;
 
     // Time::SetResolution(Time::US);
     // Create experiment
@@ -993,8 +1033,8 @@ int main(int argc, char *argv[])
         double resourcesForClusters[experiment.nClusters_1st_level];
 
         // Set minimum resource value
-        double minResourceValue = 600000;
-        double maxResourceValue = 2000000;
+        double minResourceValue = 300000;
+        double maxResourceValue = 2500000;
 
         // Generate random resources for clusters
         for (int j = 0; j < experiment.nClusters_1st_level; j++)
@@ -1019,8 +1059,42 @@ int main(int argc, char *argv[])
         std::cout << std::endl;
         std::cout << "Throughput: " << experimentResult.throughput << " Pkt/s" << std::endl;
         std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
-        // Do something with results
     }
 
     return 0;
+}
+
+int main(int argc, char **argv)
+{
+    Taller1Experiment experiment;
+
+    double resourcesForClusters[experiment.nClusters_1st_level];
+
+    // Set minimum resource value
+    double minResourceValue = 300000;
+    double maxResourceValue = 2500000;
+
+    // Generate random resources for clusters
+    for (int j = 0; j < experiment.nClusters_1st_level; j++)
+    {
+        resourcesForClusters[j] = ((double)rand() / (RAND_MAX)) *
+                                      (maxResourceValue - minResourceValue) +
+                                  minResourceValue;
+    }
+
+    // Receive command line args
+    experiment.HandleCommandLineArgs(argc, argv, resourcesForClusters);
+
+    // Run experiment
+    SimulationResult experimentResult = experiment.Run();
+    std::cout << "Resources: " << std::endl;
+
+    for (int i = 0; i < (int)experiment.firstLayerResources.size(); i++)
+    {
+        std::cout << experiment.firstLayerResources[i] << " ";
+    }
+
+    std::cout << std::endl;
+    std::cout << "Throughput: " << experimentResult.throughput << " Pkt/s" << std::endl;
+    std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
 }
