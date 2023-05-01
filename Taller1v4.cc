@@ -345,21 +345,25 @@ void ClusterNode::configureAsReceiver(Taller1Experiment *_parent)
     InetSocketAddress local = InetSocketAddress(remoteAddr, parent->port);
     recvSink->Bind(local);
     recvSink->SetRecvCallback(MakeCallback(&ClusterNode::ReceivePacket, this));
+
     configuredAsReceiver = true;
 }
 
 // Callback for packet sent BY node
 void ClusterNode::OnPacketSent(Ptr<const Packet> packet)
 {
-    std::cout << "Packet sent from IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
     parent->sentCount++; // Propagate callback to parent
 }
 
 // Callback for packet received BY node
 void ClusterNode::ReceivePacket(Ptr<Socket> socket)
 {
-    std::cout << "Packet received on IP: " << node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << std::endl;
-    parent->receivedCount++; // Propagate callback to parent
+    while (socket->GetRxAvailable() > 0)
+    {
+        // Multiple packets could have reached, they must be "read" by means of Recv()
+        socket->Recv();
+        parent->receivedCount++; // Propagate callback to parent
+    }
 }
 
 // Create nodes contaner with specified number of nodes
@@ -537,12 +541,9 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 
 SimulationResult Taller1Experiment::Run()
 {
-
     // Randomize
     std::srand(std::time(nullptr));
     RngSeedManager::SetSeed(std::rand());
-
-    Config::SetDefault("ns3::OnOffApplication::PacketSize", StringValue("1472"));
 
     std::cout << "Starting configuration..." << std::endl;
 
@@ -555,7 +556,8 @@ SimulationResult Taller1Experiment::Run()
 
     // Using friss propagation loss model
     // It considers variables such as waves distortion due to obstacles, diffraction and related phenomena
-    // channel.AddPropagationLoss("ns3::FriisPropagationLossModel");
+    channel.AddPropagationLoss(
+        "ns3::FriisPropagationLossModel");
 
     // Use constant speed propagation delay model
     channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
@@ -563,8 +565,8 @@ SimulationResult Taller1Experiment::Run()
     // Configure transmission channel
     YansWifiPhyHelper phy;
 
-    // phy.Set("TxPowerStart", DoubleValue(100.0));
-    // phy.Set("TxPowerEnd", DoubleValue(100.0));
+    phy.Set("TxPowerStart", DoubleValue(100.0));
+    phy.Set("TxPowerEnd", DoubleValue(100.0));
 
     // Define speed (Which is distributed uniformly between 0 and 1 (units are m/s))
     double nodeMinSpeed = 0.0, nodeMaxSpeed = 1.0;
@@ -685,7 +687,7 @@ SimulationResult Taller1Experiment::Run()
             firstLayerResources[i],
             probability);
 
-        std::cout << "Resources: " << cluster.getResources() << std::endl;
+        std::cout << "Resources in this cluster: " << cluster.getResources() << std::endl;
 
         // Add this cluster to first level clusters
         first_level.clusters.push_back(cluster);
@@ -802,7 +804,7 @@ SimulationResult Taller1Experiment::Run()
         mobilityAdhoc.PushReferenceMobilityModel(cluster.headContainer.Get(0));
         mobilityAdhoc.SetPositionAllocator(subnetAlloc);
         mobilityAdhoc.SetMobilityModel("ns3::RandomDirection2dMobilityModel",
-                                       "Bounds", RectangleValue(Rectangle(-20, 20, -20, 20)),
+                                       "Bounds", RectangleValue(Rectangle(-10, 10, -10, 10)),
                                        "Speed", StringValue(sSpeed),
                                        "Pause", StringValue(sPause));
         mobilityAdhoc.Install(cluster.ns3Nodes);
@@ -934,7 +936,7 @@ SimulationResult Taller1Experiment::Run()
     std::cout << "Preparing random traffic for simulation..." << std::endl;
 
     // Make k random connections between nodes in first level
-    int k = 1;
+    int k = 20;
     for (int i = 0; i < k; i++)
     {
         int senderNodeIndex = rand() % nNodes_pC_1st_level;
@@ -961,8 +963,10 @@ SimulationResult Taller1Experiment::Run()
     }
 
     std::cout << "Running simulation..." << std::endl;
+
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
+    Time::SetResolution(Time::US);
     Simulator::Run();
 
     std::cout << "Simulation finished" << std::endl;
@@ -971,7 +975,7 @@ SimulationResult Taller1Experiment::Run()
     // Show performance results
     std::cout << "Total packets received: " << receivedCount << std::endl;
     std::cout << "Total packets sent: " << sentCount << std::endl;
-    double throughput = receivedCount / simulationTime; // Pkt / s
+    double throughput = receivedCount / Simulator::Now().GetSeconds(); // Pkt / s
     double lossRate = (sentCount - receivedCount) / (double)sentCount;
 
     // Generate simulation results data container
@@ -994,7 +998,7 @@ int main(int argc, char *argv[])
 
     // Run experiment
     SimulationResult experimentResult = experiment.Run();
-    std::cout << "Throughput: " << experimentResult.throughput << " Mbit/s" << std::endl;
+    std::cout << "Throughput: " << experimentResult.throughput << " Pkt/s" << std::endl;
     std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
     // Do something with results
 
