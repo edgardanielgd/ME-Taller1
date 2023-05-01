@@ -40,7 +40,7 @@ public:
     SimulationResult Run();
 
     // Handle commandline arguments
-    void HandleCommandLineArgs(int, char **);
+    void HandleCommandLineArgs(int, char **, double[]);
 
     // UDP sender port number
     int port;
@@ -91,7 +91,7 @@ public:
     // Probability
     // We can of course set each cluster a different probability, but firstly
     // we will assume they all have the same probability for truncated geometric distribution
-    double probability = 0.1;
+    double probability = 0.5;
 
     // Mean offTime
     double meanOffTime = 10; // Seconds
@@ -100,7 +100,7 @@ public:
     double trafficRatio = 0.99;
 
     // Simulation time
-    double simulationTime = 100.0; // Seconds
+    double simulationTime = 30.0; // Seconds
 };
 
 // Save a specific node useful info (resources actually)
@@ -307,7 +307,7 @@ ApplicationContainer ClusterNode::connectWithNode(ClusterNode &receiver, Taller1
     Ptr<ExponentialRandomVariable> var = CreateObject<ExponentialRandomVariable>();
     var->SetAttribute("Mean", DoubleValue((trafficRatio * 0.1 / (1 - trafficRatio))));
     ApplicationContainer sendApp = onoff.Install(node);
-    sendApp.Start(Seconds(30.0));
+    sendApp.Start(Seconds(0.0));
     sendApp.Stop(Seconds(parent->simulationTime));
 
     receiver.configureAsReceiver(parent);
@@ -362,6 +362,8 @@ void ClusterNode::ReceivePacket(Ptr<Socket> socket)
     {
         // Multiple packets could have reached, they must be "read" by means of Recv()
         socket->Recv();
+        // std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
+        //           << "Received one packet" << std::endl;
         parent->receivedCount++; // Propagate callback to parent
     }
 }
@@ -479,14 +481,12 @@ Taller1Experiment::Taller1Experiment()
       // Default width to 500
       width(500),
       // Default height to 500
-      height(500),
-      // Default simulation time to 100
-      simulationTime(1000)
+      height(500)
 {
 }
 
 // Receive and set command line arguments
-void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
+void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv, double resources[])
 {
     /*
      * Get console parameters
@@ -527,13 +527,6 @@ void Taller1Experiment::HandleCommandLineArgs(int argc, char **argv)
 
     // Set values to vector of resources on First Layer
     // Its size should match the number of first layer cluster
-    double resources[] = {
-        180000,
-        180000,
-        150000,
-        150000,
-        120000,
-        120000};
 
     firstLayerResources = std::vector<double>(
         resources, resources + nClusters_1st_level);
@@ -663,8 +656,8 @@ SimulationResult Taller1Experiment::Run()
 
         // Setup heads as APs
         nodesMac.SetType("ns3::ApWifiMac",
-                         "Ssid", SsidValue(ssid),
-                         "BeaconInterval", TimeValue(Seconds(2.048)));
+                         "Ssid", SsidValue(ssid));
+
         NetDeviceContainer headDevice = nodesWifi.Install(phy, nodesMac, cluster.headContainer);
 
         // Total cluster devices
@@ -966,7 +959,6 @@ SimulationResult Taller1Experiment::Run()
 
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
-    Time::SetResolution(Time::US);
     Simulator::Run();
 
     std::cout << "Simulation finished" << std::endl;
@@ -990,17 +982,45 @@ SimulationResult Taller1Experiment::Run()
 
 int main(int argc, char *argv[])
 {
+    int ncases = 10;
+
+    // Time::SetResolution(Time::US);
     // Create experiment
-    Taller1Experiment experiment;
+    for (int i = 0; i < ncases; i++)
+    {
+        Taller1Experiment experiment;
 
-    // Receive command line args
-    experiment.HandleCommandLineArgs(argc, argv);
+        double resourcesForClusters[experiment.nClusters_1st_level];
 
-    // Run experiment
-    SimulationResult experimentResult = experiment.Run();
-    std::cout << "Throughput: " << experimentResult.throughput << " Pkt/s" << std::endl;
-    std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
-    // Do something with results
+        // Set minimum resource value
+        double minResourceValue = 100000;
+        double maxResourceValue = 600000;
+
+        // Generate random resources for clusters
+        for (int j = 0; j < experiment.nClusters_1st_level; j++)
+        {
+            resourcesForClusters[j] = ((double)rand() / (RAND_MAX)) *
+                                          (maxResourceValue - minResourceValue) +
+                                      minResourceValue;
+        }
+
+        // Receive command line args
+        experiment.HandleCommandLineArgs(argc, argv, resourcesForClusters);
+
+        // Run experiment
+        std::cout << "Case " << i << std::endl;
+        SimulationResult experimentResult = experiment.Run();
+        std::cout << "Resources: " << std::endl;
+
+        for (int i = 0; i < (int)experiment.firstLayerResources.size(); i++)
+        {
+            std::cout << experiment.firstLayerResources[i] << " ";
+        }
+        std::cout << std::endl;
+        std::cout << "Throughput: " << experimentResult.throughput << " Pkt/s" << std::endl;
+        std::cout << "Loss rate: " << experimentResult.lossRate << std::endl;
+        // Do something with results
+    }
 
     return 0;
 }
