@@ -362,7 +362,7 @@ void ClusterNode::ReceivePacket(Ptr<Socket> socket)
     {
         // Multiple packets could have reached, they must be "read" by means of Recv()
         socket->Recv();
-        // std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
+        // //std::cout << Simulator::Now().GetSeconds() << " " << node->GetId() << " "
         //           << "Received one packet" << std::endl;
         parent->receivedCount++; // Propagate callback to parent
     }
@@ -538,7 +538,7 @@ SimulationResult Taller1Experiment::Run()
     std::srand(std::time(nullptr));
     RngSeedManager::SetSeed(std::rand());
 
-    std::cout << "Starting configuration..." << std::endl;
+    // std::cout << "Starting configuration..." << std::endl;
 
     //
     // Configure physical layer
@@ -613,14 +613,14 @@ SimulationResult Taller1Experiment::Run()
     // Initialize all levels
     Level first_level, second_level, third_level, fourth_level;
 
-    std::cout << "Creating first level clusters..." << std::endl;
+    // std::cout << "Creating first level clusters..." << std::endl;
 
     // Always create nodes for the first level (note actually all nodes instances will be created here)
     // Create nodes for each cluster in first level
     for (int i = 0; i < nClusters_1st_level; i++)
     {
-        std::cout << "[Lvl 1] Creating cluster #" << i << std::endl;
-        // Create cluster
+        // std::cout << "[Lvl 1] Creating cluster #" << i << std::endl;
+        //  Create cluster
         Cluster cluster(i);
 
         // Since we are in the first layer, create nodes
@@ -680,7 +680,7 @@ SimulationResult Taller1Experiment::Run()
             firstLayerResources[i],
             probability);
 
-        std::cout << "Resources in this cluster: " << cluster.getResources() << std::endl;
+        // std::cout << "Resources in this cluster: " << cluster.getResources() << std::endl;
 
         // Add this cluster to first level clusters
         first_level.clusters.push_back(cluster);
@@ -688,7 +688,7 @@ SimulationResult Taller1Experiment::Run()
         // Mobility will be set later after configuring heads mobility
     }
 
-    std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
+    // std::cout << "[Lvl 1] Finished clusters creation..." << std::endl;
 
     if (nLevels == 2)
     {
@@ -699,13 +699,13 @@ SimulationResult Taller1Experiment::Run()
         nNodes_pC_2nd_level = nClusters_1st_level;
     }
 
-    std::cout << "Creating second level clusters..." << std::endl;
+    // std::cout << "Creating second level clusters..." << std::endl;
 
     // Get nodes for second cluster (Heads on first level)
     for (int i = 0; i < nClusters_2nd_level; i++)
     {
-        std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
-        // Create cluster
+        // std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
+        //  Create cluster
         Cluster cluster(i + nClusters_1st_level);
 
         NodeContainer nodes;
@@ -774,10 +774,10 @@ SimulationResult Taller1Experiment::Run()
         // Add this cluster to second level clusters
         second_level.clusters.push_back(cluster);
     }
-    std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
+    // std::cout << "[Lvl 2] Finished clusters creation..." << std::endl;
 
     // Now set mobility for lvl 1 nodes
-    std::cout << "[Lvl 1] Placing mobility models..." << std::endl;
+    // std::cout << "[Lvl 1] Placing mobility models..." << std::endl;
 
     for (int i = 0; i < nClusters_1st_level; i++)
     {
@@ -814,11 +814,11 @@ SimulationResult Taller1Experiment::Run()
             nNodes_pC_3rd_level = nClusters_2nd_level;
         }
 
-        std::cout << "Creating third level clusters..." << std::endl;
+        // std::cout << "Creating third level clusters..." << std::endl;
 
         for (int i = 0; i < nClusters_3rd_level; i++)
         {
-            std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
+            // std::cout << "[Lvl 2] Creating cluster #" << i << std::endl;
 
             // Create cluster
             Cluster cluster(i + nClusters_1st_level + nClusters_2nd_level);
@@ -829,7 +829,7 @@ SimulationResult Taller1Experiment::Run()
             for (int j = 0; j < nNodes_pC_3rd_level; j++)
             {
                 // Add head as an element for cluster
-                std::cout << (i * nNodes_pC_3rd_level + j) * nNodes_pC_2nd_level << std::endl;
+                // std::cout << (i * nNodes_pC_3rd_level + j) * nNodes_pC_2nd_level << std::endl;
                 nodes.Add(
                     first_level.clusters[i * nNodes_pC_3rd_level * nNodes_pC_2nd_level]
                         .ns3Nodes.Get(1));
@@ -868,15 +868,15 @@ SimulationResult Taller1Experiment::Run()
             third_level.clusters.push_back(cluster);
         }
 
-        std::cout << "[Lvl 3] Finished clusters creation..." << std::endl;
+        // std::cout << "[Lvl 3] Finished clusters creation..." << std::endl;
 
         if (nLevels > 3)
         {
             // Finally, there is a maximum of four levels in case third layer
             // has multiple clusters
 
-            std::cout << "Creating fourth level cluster..." << std::endl;
-            std::cout << "[Lvl 4] Creating cluster #0" << std::endl;
+            // std::cout << "Creating fourth level cluster..." << std::endl;
+            // std::cout << "[Lvl 4] Creating cluster #0" << std::endl;
 
             // Create cluster
             Cluster cluster(nClusters_1st_level + nClusters_2nd_level + nClusters_3rd_level);
@@ -921,12 +921,12 @@ SimulationResult Taller1Experiment::Run()
             // Add this cluster to second level clusters
             fourth_level.clusters.push_back(cluster);
 
-            std::cout << "[Lvl 4] Finished clusters creation..." << std::endl;
+            // std::cout << "[Lvl 4] Finished clusters creation..." << std::endl;
         }
     }
 
     // Preparate nodes for simulation
-    std::cout << "Preparing random traffic for simulation..." << std::endl;
+    // std::cout << "Preparing random traffic for simulation..." << std::endl;
 
     // Make k random connections between nodes in first level
     int k = 20;
@@ -944,24 +944,24 @@ SimulationResult Taller1Experiment::Run()
             receiverClusterIndex = rand() % nClusters_1st_level;
         }
 
-        std::cout << "Connecting IP Address: "
-                  << first_level.clusters[senderClusterIndex].nodes[senderNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
-                  << " with IP Address: "
-                  << first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
-                  << std::endl;
+        // std::cout << "Connecting IP Address: "
+        // << first_level.clusters[senderClusterIndex].nodes[senderNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+        // << " with IP Address: "
+        // << first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex].node->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal()
+        // << std::endl;
 
         ClusterNode senderNode = first_level.clusters[senderClusterIndex].nodes[senderNodeIndex];
         ClusterNode receiverNode = first_level.clusters[receiverClusterIndex].nodes[receiverNodeIndex];
         senderNode.connectWithNode(receiverNode, this);
     }
 
-    std::cout << "Running simulation..." << std::endl;
+    // std::cout << "Running simulation..." << std::endl;
 
     // Run simulation
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
 
-    std::cout << "Simulation finished" << std::endl;
+    // std::cout << "Simulation finished" << std::endl;
     std::cout << "Level of resources in first layer: " << first_level.getResources() << std::endl;
 
     // Show performance results
@@ -993,8 +993,8 @@ int main(int argc, char *argv[])
         double resourcesForClusters[experiment.nClusters_1st_level];
 
         // Set minimum resource value
-        double minResourceValue = 100000;
-        double maxResourceValue = 600000;
+        double minResourceValue = 600000;
+        double maxResourceValue = 2000000;
 
         // Generate random resources for clusters
         for (int j = 0; j < experiment.nClusters_1st_level; j++)
